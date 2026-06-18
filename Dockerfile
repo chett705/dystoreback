@@ -30,4 +30,6 @@ RUN composer install --no-dev --optimize-autoloader
 # កំណត់សិទ្ធិ Permissions លើ Folder ផ្ទុកទិន្នន័យ
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 
+# បន្ថែមបន្ទាត់នេះ ដើម្បីឱ្យវារត់បង្កើត Table ក្នុង Database អនឡាញស្វ័យប្រវត្តិ
+RUN php artisan artisan migrate --force
 EXPOSE 80

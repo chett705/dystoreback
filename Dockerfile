@@ -44,4 +44,4 @@ RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cac
 EXPOSE 80
 
 # ទុកតែ apache2-foreground ស្អាត ដើម្បីឱ្យ Server បើកដំណើរការបានរលូន
-CMD ["/bin/sh", "-c", "php artisan migrate --force && apache2-foreground"]
+CMD ["/bin/sh", "-c", "php artisan migrate --force --seed && apache2-foreground"]

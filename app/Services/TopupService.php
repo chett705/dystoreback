@@ -74,10 +74,17 @@ class TopupService
             throw new HttpException(500, 'KHQR configuration is missing.');
         }
 
-        $transactionId = $order->gateway_transaction_id ?: ('ORD_' . $order->order_no . '_' . now()->format('YmdHis'));
-        $amount = number_format((float) $order->amount, 2, '.', '');
-        // Keep the remark very short so KHQR/Bakong doesn't truncate the important bits.
-        $remark = sprintf('MLBB|ID:%s|S:%s', $order->player_id, $order->zone_id);
+        // 🚀 កូដការពារ (Safe Check)៖ ការពារករណី order_no ឬ database record លោតមកជាប់ null ឬមិនទាន់រក្សាទុកចប់
+        $orderNo = $order->order_no ?? ('TEMP_' . time() . '_' . Str::upper(Str::random(5)));
+        $transactionId = $order->gateway_transaction_id ?: ('ORD_' . $orderNo . '_' . date('YmdHis'));
+        
+        // 🚀 ការពារតម្លៃ null ដោយប្រើ ?? 0 និងធានាបំប្លែងទៅជា String Decimal លេខពីរខ្ទង់ (e.g., "2.00")
+        $amount = number_format((float) ($order->amount ?? 0), 2, '.', '');
+        
+        // 🚀 ការពារករណី player_id ឬ zone_id ទទេរ ដើម្បីកុំឱ្យទាស់មុខងារ sprintf
+        $playerId = $order->player_id ?? '0';
+        $zoneId = $order->zone_id ?? '0';
+        $remark = sprintf('MLBB|ID:%s|S:%s', $playerId, $zoneId);
 
         $paymentData = [
             'transaction_id' => $transactionId,
@@ -85,6 +92,7 @@ class TopupService
             'remark' => $remark,
         ];
 
+        // 🚀 រត់ Hash ជាមួយតម្លៃដែលត្រូវបានសម្អាត និងមានសុវត្ថិភាពខ្ពស់ រួចជាស្រេច
         $paymentData['hash'] = sha1(
             $secretKey
             . $paymentData['transaction_id']
@@ -138,14 +146,14 @@ class TopupService
         $message = implode("\n", [
             "MLBB Top-up Alert",
             "Event: {$statusLabel}",
-            "Order: {$order->order_no}",
-            "Game: {$order->game?->name}",
-            "Package: {$order->package?->name} ({$order->diamond_amount} Diamonds)",
-            "Player ID: {$order->player_id}",
+            "Order: " . ($order->order_no ?? '-'),
+            "Game: " . ($order->game?->name ?? '-'),
+            "Package: " . ($order->package?->name ?? '-') . " (" . ($order->diamond_amount ?? 0) . " Diamonds)",
+            "Player ID: " . ($order->player_id ?? '-'),
             "Username: " . ($order->player_username ?: '-'),
-            "Server ID: {$order->zone_id}",
-            "Amount: {$order->amount}",
-            "Status: {$order->status}",
+            "Server ID: " . ($order->zone_id ?? '-'),
+            "Amount: " . ($order->amount ?? '0.00'),
+            "Status: " . ($order->status ?? 'pending'),
         ]);
 
         try {

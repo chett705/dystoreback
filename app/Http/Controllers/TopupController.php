@@ -116,6 +116,7 @@ class TopupController extends Controller
         ], 201);
     }
 
+
     public function showOrder(TopupOrder $order): JsonResponse
     {
         $order->load(['game', 'package']);

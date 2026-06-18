@@ -18,19 +18,22 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        // កែប្រែត្រង់នេះ៖ លុប ->where('is_admin', true) ចោលដើម្បីកុំឱ្យឆែក Role
+        // 🎯 ស្វែងរកគណនីអ្នកប្រើប្រាស់តាមរយៈ Email
         $user = User::query()
             ->where('email', $validated['email'])
             ->first();
 
+        // ផ្ទៀងផ្ទាត់គណនី និងលេខសម្ងាត់
         if (! $user || ! Hash::check($validated['password'], $user->password)) {
             return response()->json([
-                'message' => 'Invalid credentials.', // ប្ដូរពាក្យកុំឱ្យមានជាប់ពាក្យ admin នាំច្រឡំ
+                'message' => 'Invalid credentials.',
             ], 422);
         }
 
+        // បង្កើត Random Token ថ្មី
         $token = Str::random(64);
 
+        // រក្សាទុក SHA-256 Hash នៃ Token ចូលទៅក្នុង Database ដើម្បីសុវត្ថិភាព
         $user->forceFill([
             'admin_api_token_hash' => hash('sha256', $token),
         ])->save();
@@ -38,8 +41,8 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login successful.',
             'token_type' => 'Bearer',
-            'access_token' => $token,
-            // កែប្រែត្រង់នេះ៖ លុប 'is_admin' ចេញពីបញ្ជីទិន្នន័យដែលត្រូវផ្ញើទៅ React
+            'token' => $token,        // 🚀 ថែម Key នេះ ដើម្បីការពារបើ React ដេញរក res.token
+            'access_token' => $token, // 🚀 រក្សាទុក Key នេះ បើ React ដេញរក res.access_token
             'admin' => $user->only(['id', 'name', 'email']), 
         ]);
     }

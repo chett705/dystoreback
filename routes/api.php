@@ -22,6 +22,10 @@ Route::prefix('admin')->group(function () {
         Route::post('/logout', [AdminAuthController::class, 'logout'])->name('api.admin.logout');
         Route::get('/dashboard', [AdminDashboardController::class, 'index'])->name('api.admin.dashboard');
         Route::post('/games', [AdminDashboardController::class, 'storeGame'])->name('api.admin.games.store');
+        
+        // 🎯 បន្ថែមបន្ទាត់កូដ POST មួយនេះ ដើម្បីទទួលការបង្កើតកញ្ចប់ Diamond ថ្មីពី React
+        Route::post('/packages', [AdminDashboardController::class, 'storePackage'])->name('api.admin.packages.store');
+        
         Route::patch('/packages/{package}', [AdminDashboardController::class, 'updatePackage'])->name('api.admin.packages.update');
         Route::patch('/orders/{order}', [AdminDashboardController::class, 'updateOrder'])->name('api.admin.orders.update');
     });

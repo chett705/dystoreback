@@ -37,8 +37,14 @@ class TopupController extends Controller
     /**
      * 🎮 បង្ហាញព័ត៌មានលម្អិតនៃហ្គេមមួយ
      */
-    public function showGame(TopupGame $game): JsonResponse
+   public function showGame($idOrCode): JsonResponse
     {
+        // 🎯 ដំណោះស្រាយគន្លឹះ៖ ស្វែងរកតាម ID បើជាលេខ ឬស្វែងរកតាម Code បើជាអក្សរ
+        $game = TopupGame::query()
+            ->where('id', $idOrCode)
+            ->orWhere('code', $idOrCode)
+            ->firstOrFail();
+
         $game->load(['packages' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order')]);
 
         return response()->json([

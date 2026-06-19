@@ -17,6 +17,9 @@ class TopupController extends Controller
     {
     }
 
+    /**
+     * 📜 ទាញយកបញ្ជីហ្គេម និងកញ្ចប់តម្លៃដែលបើកដំណើរការ (Active Catalog)
+     */
     public function catalog(): JsonResponse
     {
         $games = TopupGame::query()
@@ -30,6 +33,9 @@ class TopupController extends Controller
         ]);
     }
 
+    /**
+     * 🎮 បង្ហាញព័ត៌មានលម្អិតនៃហ្គេមមួយ
+     */
     public function showGame(TopupGame $game): JsonResponse
     {
         $game->load(['packages' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order')]);
@@ -39,18 +45,25 @@ class TopupController extends Controller
         ]);
     }
 
+    /**
+     * 🔍 មុខងារពិនិត្យមើលឈ្មោះអ្នកលេង (Check Game Username)
+     * 🎯 កែសម្រួល៖ zone_id ទៅជា 'nullable' ដើម្បីកុំឱ្យគាំងជាមួយ Free Fire
+     */
     public function checkUsername(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'game_code' => ['required', 'string', 'exists:topup_games,code'],
             'player_id' => ['required', 'string', 'max:50'],
-            'zone_id' => ['required', 'string', 'max:50'],
+            'zone_id'   => ['nullable', 'string', 'max:50'], // 🎯 ប្ដូរទៅជា nullable
         ]);
+
+        // កំណត់តម្លៃលំនាំដើមជាអក្សរទទេ បើគ្មាន zone_id ផ្ញើមក
+        $zoneId = $validated['zone_id'] ?? '';
 
         $lookup = $this->topupService->lookupGameUsername(
             $validated['game_code'],
             $validated['player_id'],
-            $validated['zone_id']
+            $zoneId
         );
 
         return response()->json([
@@ -61,62 +74,72 @@ class TopupController extends Controller
         ], $lookup['success'] ? 200 : 422);
     }
 
+    /**
+     * 🛒 មុខងារបង្កើត Order ថ្មី និងរៀបចំបោះ QR Code
+     * 🎯 កែសម្រួល៖ zone_id ទៅជា 'nullable' ដើម្បីគាំទ្រគ្រប់ហ្គេមទាំងអស់
+     */
     public function createOrder(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'game_code' => ['required', 'string', 'exists:topup_games,code'],
-            'package_id' => ['required', 'integer', 'exists:topup_packages,id'],
-            'player_id' => ['required', 'string', 'max:50'],
+            'game_code'       => ['required', 'string', 'exists:topup_games,code'],
+            'package_id'      => ['required', 'integer', 'exists:topup_packages,id'],
+            'player_id'       => ['required', 'string', 'max:50'],
             'player_username' => ['nullable', 'string', 'max:191'],
-            'zone_id' => ['required', 'string', 'max:50'],
-            'payment_method' => ['required', 'in:khqr'],
+            'zone_id'         => ['nullable', 'string', 'max:50'], // 🎯 ប្ដូរទៅជា nullable រួចរាល់
+            'payment_method'  => ['required', 'in:khqr'],
         ]);
 
         $game = TopupGame::query()->where('code', $validated['game_code'])->firstOrFail();
         $package = TopupPackage::query()
             ->where('id', $validated['package_id'])
-            ->where('topup_game_id', $game->id)
+            ->where(function($query) use ($game) {
+                // 🎯 ធានាការស្វែងរកកញ្ចប់តម្លៃត្រូវជាមួយ ID ហ្គេម (ទោះបីជាជាប់ជួរ game_id ឬ topup_game_id ក៏ដោយ)
+                $query->where('topup_game_id', $game->id)
+                      ->orWhere('game_id', $game->id);
+            })
             ->where('is_active', true)
             ->firstOrFail();
 
         $order = DB::transaction(function () use ($validated, $game, $package): TopupOrder {
             $order = TopupOrder::create([
-                'order_no' => 'ORD_' . now()->format('YmdHis') . '_' . Str::upper(Str::random(8)),
-                'topup_game_id' => $game->id,
+                'order_no'         => 'ORD_' . now()->format('YmdHis') . '_' . Str::upper(Str::random(8)),
+                'topup_game_id'    => $game->id,
                 'topup_package_id' => $package->id,
-                'player_id' => $validated['player_id'],
-                'player_username' => $validated['player_username'] ?? null,
-                'zone_id' => $validated['zone_id'],
-                'payment_method' => $validated['payment_method'],
-                'amount' => $package->price,
-                'diamond_amount' => $package->diamond_amount,
-                'status' => 'pending',
+                'player_id'        => $validated['player_id'],
+                'player_username'  => $validated['player_username'] ?? null,
+                'zone_id'          => $validated['zone_id'] ?? '', // 🎯 បើគ្មានទេ ឱ្យរក្សាទុកជាអក្សរទទេ
+                'payment_method'   => $validated['payment_method'],
+                'amount'           => $package->price,
+                'diamond_amount'   => $package->diamond_amount,
+                'status'           => 'pending',
             ]);
 
             [$checkoutUrl, $paymentData] = $this->topupService->buildKhqrCheckout($order);
 
             $order->forceFill([
                 'gateway_transaction_id' => $paymentData['transaction_id'],
-                'gateway_checkout_url' => $checkoutUrl,
-                'gateway_hash' => $paymentData['hash'],
-                'gateway_payload' => $paymentData,
+                'gateway_checkout_url'   => $checkoutUrl,
+                'gateway_hash'           => $paymentData['hash'],
+                'gateway_payload'        => $paymentData,
             ])->save();
 
             return $order;
-        });
+       });
 
         $order->load(['game', 'package']);
         $this->topupService->sendTelegramAlert($order, 'created');
 
         return response()->json([
-            'message' => 'Order created. Open the KHQR checkout next.',
-            'order' => $order,
+            'message'      => 'Order created. Open the KHQR checkout next.',
+            'order'        => $order,
             'checkout_url' => $order->gateway_checkout_url,
-            'next_step' => 'open_payment_modal',
+            'next_step'    => 'open_payment_modal',
         ], 201);
     }
 
-
+    /**
+     * 🔍 បង្ហាញព័ត៌មាន Order មួយ
+     */
     public function showOrder(TopupOrder $order): JsonResponse
     {
         $order->load(['game', 'package']);
@@ -126,6 +149,9 @@ class TopupController extends Controller
         ]);
     }
 
+    /**
+     * 🔄 បង្កើតលីង Checkout សារជាថ្មី (ករណីចង់បាញ់ទូទាត់បន្ត)
+     */
     public function generateCheckout(TopupOrder $order): JsonResponse
     {
         if ($order->status !== 'pending') {
@@ -139,25 +165,28 @@ class TopupController extends Controller
 
         $order->forceFill([
             'gateway_transaction_id' => $paymentData['transaction_id'],
-            'gateway_checkout_url' => $checkoutUrl,
-            'gateway_hash' => $paymentData['hash'],
-            'gateway_payload' => $paymentData,
+            'gateway_checkout_url'   => $checkoutUrl,
+            'gateway_hash'           => $paymentData['hash'],
+            'gateway_payload'        => $paymentData,
         ])->save();
 
         return response()->json([
-            'message' => 'KHQR checkout generated successfully.',
-            'order' => $order->fresh(['game', 'package']),
+            'message'      => 'KHQR checkout generated successfully.',
+            'order'        => $order->fresh(['game', 'package']),
             'checkout_url' => $checkoutUrl,
         ]);
     }
 
+    /**
+     * 🔔 ប្រព័ន្ធស្ទាក់ចាប់ការបាញ់លុយពីធនាគារ (KHQR Webhook)
+     */
     public function khqrWebhook(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'transaction_id' => ['required', 'string'],
-            'status' => ['required', 'string'],
-            'amount' => ['nullable', 'numeric'],
-            'hash' => ['nullable', 'string'],
+            'status'         => ['required', 'string'],
+            'amount'         => ['nullable', 'numeric'],
+            'hash'           => ['nullable', 'string'],
         ]);
 
         $order = TopupOrder::query()
@@ -166,12 +195,12 @@ class TopupController extends Controller
 
         if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
             $order->forceFill([
-                'status' => 'paid',
+                'status'  => 'paid',
                 'paid_at' => now(),
             ])->save();
 
             $order->forceFill([
-                'status' => 'processing',
+                'status'        => 'processing',
                 'processing_at' => now(),
             ])->save();
 
@@ -179,18 +208,18 @@ class TopupController extends Controller
 
             if ($supplierResult['success']) {
                 $order->forceFill([
-                    'status' => 'success',
-                    'success_at' => now(),
+                    'status'            => 'success',
+                    'success_at'        => now(),
                     'supplier_order_id' => $supplierResult['supplier_order_id'],
-                    'supplier_payload' => $supplierResult,
+                    'supplier_payload'  => $supplierResult,
                 ])->save();
 
                 $this->topupService->sendTelegramAlert($order->fresh(['game', 'package']), 'success');
             } else {
                 $order->forceFill([
-                    'status' => 'failed',
-                    'failed_at' => now(),
-                    'failure_reason' => $supplierResult['message'] ?? 'Supplier request failed.',
+                    'status'           => 'failed',
+                    'failed_at'        => now(),
+                    'failure_reason'   => $supplierResult['message'] ?? 'Supplier request failed.',
                     'supplier_payload' => $supplierResult,
                 ])->save();
 
@@ -198,8 +227,8 @@ class TopupController extends Controller
             }
         } else {
             $order->forceFill([
-                'status' => 'failed',
-                'failed_at' => now(),
+                'status'         => 'failed',
+                'failed_at'      => now(),
                 'failure_reason' => 'Payment gateway reported a non-success status.',
             ])->save();
 
@@ -208,7 +237,7 @@ class TopupController extends Controller
 
         return response()->json([
             'message' => 'Webhook processed.',
-            'order' => $order->fresh(['game', 'package']),
+            'order'   => $order->fresh(['game', 'package']),
         ]);
     }
 }

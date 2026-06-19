@@ -76,6 +76,9 @@ class TopupController extends Controller
     /**
      * 🛒 មុខងារបង្កើត Order ថ្មី (ដំឡើងប្រព័ន្ធទាញយកទិន្នន័យកំហុសពិតប្រាកដ)
      */
+   /**
+     * 🛒 មុខងារបង្កើត Order ថ្មី និងរៀបចំបោះ QR Code (ជាមួយប្រព័ន្ធឆែកកំហុសដាច់ខាត)
+     */
     public function createOrder(Request $request): JsonResponse
     {
         try {
@@ -96,8 +99,9 @@ class TopupController extends Controller
                 ->where('id', $validated['package_id'])
                 ->firstOrFail();
 
+            // 🎯 ចាប់ផ្ដើមបង្កើតទិន្នន័យ និងរៀបចំ QR Checkout ក្នុង Transaction តែមួយ
             $order = DB::transaction(function () use ($validated, $game, $package): TopupOrder {
-                return TopupOrder::create([
+                $createdOrder = TopupOrder::create([
                     'order_no'         => 'ORD_' . now()->format('YmdHis') . '_' . Str::upper(Str::random(8)),
                     'topup_game_id'    => $game->id,
                     'topup_package_id' => $package->id,
@@ -109,9 +113,21 @@ class TopupController extends Controller
                     'diamond_amount'   => $package->diamond_amount,
                     'status'           => 'pending',
                 ]);
+
+                // 🚀 រៀបចំបាញ់បង្កើតលីងទូទាត់ភ្លាមៗនៅទីនេះ ដើម្បីធានាថាមាន Checkout URL ជានិច្ច
+                [$checkoutUrl, $paymentData] = $this->topupService->buildKhqrCheckout($createdOrder);
+
+                $createdOrder->forceFill([
+                    'gateway_transaction_id' => $paymentData['transaction_id'],
+                    'gateway_checkout_url'   => $checkoutUrl,
+                    'gateway_hash'           => $paymentData['hash'],
+                    'gateway_payload'        => $paymentData,
+                ])->save();
+
+                return $createdOrder;
             });
 
-            // 🎯 ការពារករណីខុសឈ្មោះ Relationship ក្នុង Model (game, package) នាំបាក់កូដ
+            // ការពារក្រែងលោខុសឈ្មោះ Relationship ក្នុង Model (game, package) នាំបាក់កូដ
             try {
                 $order->load(['game', 'package']);
             } catch (\Throwable $e) {
@@ -128,9 +144,9 @@ class TopupController extends Controller
             ], 201);
 
         } catch (\Throwable $exception) {
-            // 🚀 ដំណោះស្រាយគន្លឹះ៖ បោះព័ត៌មានលម្អិតនៃកំហុសពិតប្រាកដទៅកាន់ផ្ទាំង React response
+            // 🚀 ដំណោះស្រាយគន្លឹះ៖ បើមានកំហុស SQL ឬបាក់កូដត្រង់ណា គឺវាបោះអក្សរប្រាប់ចំៗតែម្ដង លែងលោតលាក់ពាក្យ Server Error ទៀតហើយ
             return response()->json([
-                'message' => 'Detailed Server Error',
+                'message' => 'Detailed Server Exception Error',
                 'error'   => $exception->getMessage(),
                 'file'    => $exception->getFile(),
                 'line'    => $exception->getLine()

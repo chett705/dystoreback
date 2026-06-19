@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\AuthController as AdminAuthController;
-use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
+use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\TopupController;
 use Illuminate\Support\Facades\Route;
 
@@ -16,17 +16,25 @@ Route::prefix('topup')->group(function () {
 });
 
 Route::prefix('admin')->group(function () {
+    // 🔐 Route សម្រាប់ Login Admin
     Route::post('/login', [AdminAuthController::class, 'login'])->name('api.admin.login');
 
+    // 🛡️ ក្រុមកូដការពារដោយ Middleware (Admin Token)
     Route::middleware('admin.token')->group(function () {
         Route::post('/logout', [AdminAuthController::class, 'logout'])->name('api.admin.logout');
-        Route::get('/dashboard', [AdminDashboardController::class, 'index'])->name('api.admin.dashboard');
-        Route::post('/games', [AdminDashboardController::class, 'storeGame'])->name('api.admin.games.store');
         
-        // 🎯 បន្ថែមបន្ទាត់កូដ POST មួយនេះ ដើម្បីទទួលការបង្កើតកញ្ចប់ Diamond ថ្មីពី React
-        Route::post('/packages', [AdminDashboardController::class, 'storePackage'])->name('api.admin.packages.store');
+        // 📊 Dashboard Overview
+        Route::get('/dashboard', [DashboardController::class, 'index'])->name('api.admin.dashboard');
         
-        Route::patch('/packages/{package}', [AdminDashboardController::class, 'updatePackage'])->name('api.admin.packages.update');
-        Route::patch('/orders/{order}', [AdminDashboardController::class, 'updateOrder'])->name('api.admin.orders.update');
+        // 🎮 គ្រប់គ្រង Games (គាំទ្រទាំង បង្កើតថ្មី និង កែប្រែ/Update)
+        Route::post('/games', [DashboardController::class, 'storeGame'])->name('api.admin.games.store');
+        Route::patch('/games/{game}', [DashboardController::class, 'updateGame'])->name('api.admin.games.update'); // 🎯 ថែមផ្លូវនេះដើម្បីអាច Update Game បានបង
+        
+        // 📦 គ្រប់គ្រង Packages (គាំទ្រទាំង បង្កើតថ្មី និង កែប្រែ/Update)
+        Route::post('/packages', [DashboardController::class, 'storePackage'])->name('api.admin.packages.store');
+        Route::patch('/packages/{package}', [DashboardController::class, 'updatePackage'])->name('api.admin.packages.update');
+        
+        // 🔄 គ្រប់គ្រង Orders (កែប្រែស្ថានភាព Status និង Player Username)
+        Route::patch('/orders/{order}', [DashboardController::class, 'updateOrder'])->name('api.admin.orders.update');
     });
 });

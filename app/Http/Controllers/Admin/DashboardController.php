@@ -12,7 +12,7 @@ use Illuminate\Http\Request;
 class DashboardController extends Controller
 {
     /**
-     * 📊 មុខងារទាញយកទិន្នន័យសរុបសម្រាប់ផ្ទាំង Dashboard Overview & Management
+     * 📊 1. មុខងារទាញយកទិន្នន័យសរុបសម្រាប់ផ្ទាំង Dashboard Overview
      */
     public function index(): JsonResponse
     {
@@ -49,7 +49,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * 🎮 មុខងារបង្កើតហ្គេមថ្មី (Create New Game)
+     * 🎮 2. មុខងារបង្កើតហ្គេមថ្មី (Create New Game)
      */
     public function storeGame(Request $request): JsonResponse
     {
@@ -72,31 +72,54 @@ class DashboardController extends Controller
     }
 
     /**
-     * 📦 មុខងារបង្កើតកញ្ចប់តម្លៃ Diamonds ថ្មី (Fixed Column & Name Safe)
+     * 🔄 3. មុខងារថ្មី៖ កែប្រែ/បច្ចុប្បន្នភាពព័ត៌មានហ្គេម (Update Game)
+     */
+    public function updateGame(Request $request, TopupGame $game): JsonResponse
+    {
+        // ឆែក Validation (អនុញ្ញាតឱ្យរក្សាទុក code ដដែលបាន ដោយមិនទាស់ unique class id ខ្លួនឯង)
+        $validated = $request->validate([
+            'code' => ['required', 'string', 'max:191', 'regex:/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', 'unique:topup_games,code,' . $game->id],
+            'name' => ['required', 'string', 'max:255'],
+            'is_active' => ['nullable', 'boolean'],
+        ]);
+
+        $game->update([
+            'code' => strtolower(trim($validated['code'])),
+            'name' => trim($validated['name']),
+            'is_active' => $request->boolean('is_active'),
+        ]);
+
+        return response()->json([
+            'message' => 'Game updated successfully.',
+            'data' => $game,
+        ]);
+    }
+
+    /**
+     * 📦 4. មុខងារបង្កើតកញ្ចប់តម្លៃ Diamonds ថ្មី (Create New Package)
      */
     public function storePackage(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            // 🎯 កែសម្រួលដក 'exists' ចេញបណ្ដោះអាសន្នដើម្បីកុំឱ្យទាស់ ID ពេលរត់ local ឬ production
             'game_id'        => ['required', 'integer'], 
-            'name'           => ['nullable', 'string', 'max:255'], // 🎯 ដូរទៅជា nullable (មិនទារដាច់ខាត)
+            'name'           => ['nullable', 'string', 'max:255'], 
             'price'          => ['required', 'numeric', 'min:0'],
-            'diamond_amount' => ['required', 'integer', 'min:1'], // 🎯 បន្ថែមការឆែកគ្រាប់ Diamonds
+            'diamond_amount' => ['required', 'integer', 'min:1'], 
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
 
-        // 🎯 បង្កើតឈ្មោះ Auto-generate បើក្នុង React Form អត់មានបញ្ជូន Name មក
+        // បង្កើតឈ្មោះ Auto-generate បើក្នុង React Form អត់មានបញ្ជូន Name មក
         $packageName = $request->filled('name') 
             ? trim($validated['name']) 
             : $validated['diamond_amount'] . ' Diamonds';
 
         $package = TopupPackage::query()->create([
-            'game_id'        => $validated['game_id'],       // 🎯 បោះទៅទាំងពីរការពារខុសឈ្មោះ Column ក្នុង DB
+            'game_id'        => $validated['game_id'], 
             'topup_game_id'  => $validated['game_id'], 
             'name'           => $packageName,
             'price'          => $validated['price'],
-            'diamond_amount' => $validated['diamond_amount'], // 🎯 បញ្ចូលគ្រាប់ Diamonds ទៅ Database
+            'diamond_amount' => $validated['diamond_amount'], 
             'sort_order'     => $validated['sort_order'] ?? 0,
             'is_active'      => $request->boolean('is_active', true),
         ]);
@@ -108,14 +131,14 @@ class DashboardController extends Controller
     }
 
     /**
-     * ✏️ មុខងារកែប្រែ/បច្ចុប្បន្នភាពកញ្ចប់តម្លៃ (Fixed Column & Name Safe)
+     * ✏️ 5. មុខងារកែប្រែ/បច្ចុប្បន្នភាពកញ្ចប់តម្លៃ (Update Package)
      */
     public function updatePackage(Request $request, TopupPackage $package): JsonResponse
     {
         $validated = $request->validate([
             'name'           => ['nullable', 'string', 'max:255'],
             'price'          => ['required', 'numeric', 'min:0'],
-            'diamond_amount' => ['required', 'integer', 'min:1'], // 🎯 បន្ថែមការឆែកគ្រាប់ Diamonds
+            'diamond_amount' => ['required', 'integer', 'min:1'], 
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
@@ -127,7 +150,7 @@ class DashboardController extends Controller
         $package->update([
             'name'           => $packageName,
             'price'          => $validated['price'],
-            'diamond_amount' => $validated['diamond_amount'], // 🎯 កែប្រែគ្រាប់ Diamonds ទៅ Database
+            'diamond_amount' => $validated['diamond_amount'], 
             'sort_order'     => $validated['sort_order'] ?? $package->sort_order,
             'is_active'      => $request->boolean('is_active'),
         ]);
@@ -139,20 +162,19 @@ class DashboardController extends Controller
     }
 
     /**
-     * 🔄 មុខងារកែប្រែស្ថានភាព Order (Fixed Nullable Username)
+     * 🔄 6. មុខងារកែប្រែស្ថានភាព Order (Update Order & Nullable Username)
      */
     public function updateOrder(Request $request, TopupOrder $order): JsonResponse
     {
         $validated = $request->validate([
             'status'          => ['required', 'in:pending,paid,processing,success,failed'],
-            'player_username' => ['nullable', 'string', 'max:191'], // 🎯 ទៅជា nullable
+            'player_username' => ['nullable', 'string', 'max:191'], 
         ]);
 
         $updateData = [
             'status' => $validated['status'],
         ];
 
-        // 🎯 ឆែកមើលបើមានវាយ username ពិតប្រាកដទើបព្រមយកទៅ Update ការពារ SQL Constraint Error
         if ($request->has('player_username') && !is_null($request->input('player_username'))) {
             $updateData['player_username'] = trim($validated['player_username']);
         }

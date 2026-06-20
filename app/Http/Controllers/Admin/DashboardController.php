@@ -22,14 +22,14 @@ class DashboardController extends Controller
             'stats' => [
                 'games' => TopupGame::count(),
                 'packages' => TopupPackage::count(),
-                'orders' => TopupOrder::count(),
+                'orders' => TopupOrder::where('status', 'success')->count(),
                 'revenue' => '$' . number_format($revenue, 2),
                 'orders_pending' => TopupOrder::query()->where('status', 'pending')->count(),
                 'orders_paid' => TopupOrder::query()->where('status', 'paid')->count(),
                 'orders_success' => TopupOrder::query()->where('status', 'success')->count(),
             ],
             'games' => TopupGame::query()
-                ->with(['packages' => fn ($query) => $query->orderBy('sort_order')])
+                ->with(['packages' => fn($query) => $query->orderBy('sort_order')])
                 ->orderBy('name')
                 ->get(),
             'packages' => TopupPackage::query()
@@ -39,6 +39,7 @@ class DashboardController extends Controller
                 ->get(),
             'orders' => TopupOrder::query()
                 ->with(['game', 'package'])
+                ->where('status', 'success')
                 ->latest()
                 ->limit(100)
                 ->get(),
@@ -84,10 +85,10 @@ class DashboardController extends Controller
     public function storePackage(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'game_id'        => ['required', 'integer'], 
-            'name'           => ['nullable', 'string', 'max:255'], 
+            'game_id'        => ['required', 'integer'],
+            'name'           => ['nullable', 'string', 'max:255'],
             'price'          => ['required', 'numeric', 'min:0'],
-            'diamond_amount' => ['required', 'integer', 'min:1'], 
+            'diamond_amount' => ['required', 'integer', 'min:1'],
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
@@ -95,13 +96,13 @@ class DashboardController extends Controller
         $packageName = $request->filled('name') ? trim($validated['name']) : $validated['diamond_amount'] . ' Diamonds';
 
         $package = TopupPackage::query()->create([
-            'game_id'        => $validated['game_id'], 
-            'topup_game_id'  => $validated['game_id'], 
+            'game_id'        => $validated['game_id'],
+            'topup_game_id'  => $validated['game_id'],
             'name'           => $packageName,
             'price'          => $validated['price'],
-            'diamond_amount' => $validated['diamond_amount'], 
+            'diamond_amount' => $validated['diamond_amount'],
             'sort_order'     => $validated['sort_order'] ?? 0,
-            'is_active'      => $request->boolean('is_active', true),
+            'is_active' => $request->boolean('is_active', true),
         ]);
 
         return response()->json(['message' => 'Package created successfully.', 'package' => $package->fresh(['game'])], 201);
@@ -112,7 +113,7 @@ class DashboardController extends Controller
         $validated = $request->validate([
             'name'           => ['nullable', 'string', 'max:255'],
             'price'          => ['required', 'numeric', 'min:0'],
-            'diamond_amount' => ['required', 'integer', 'min:1'], 
+            'diamond_amount' => ['required', 'integer', 'min:1'],
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
@@ -122,7 +123,7 @@ class DashboardController extends Controller
         $package->update([
             'name'           => $packageName,
             'price'          => $validated['price'],
-            'diamond_amount' => $validated['diamond_amount'], 
+            'diamond_amount' => $validated['diamond_amount'],
             'sort_order'     => $validated['sort_order'] ?? $package->sort_order,
             'is_active'      => $request->boolean('is_active'),
         ]);
@@ -134,7 +135,7 @@ class DashboardController extends Controller
     {
         $validated = $request->validate([
             'status'          => ['required', 'in:pending,paid,processing,success,failed'],
-            'player_username' => ['nullable', 'string', 'max:191'], 
+            'player_username' => ['nullable', 'string', 'max:191'],
         ]);
 
         $updateData = ['status' => $validated['status']];
@@ -150,7 +151,7 @@ class DashboardController extends Controller
     public function manualVerifyOrder(Request $request, $id): JsonResponse
     {
         $order = TopupOrder::findOrFail($id);
-        
+
         if (in_array($order->status, ['pending', 'failed'])) {
             $order->status = 'success';
             $order->paid_at = now();
@@ -164,6 +165,7 @@ class DashboardController extends Controller
             'order'   => $order->fresh(['game', 'package'])
         ], 200);
     }
+
 
     public function destroyOrder($id): JsonResponse
     {

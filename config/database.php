@@ -62,6 +62,7 @@ return [
             // 🚀 បង្ខំឱ្យវាចាប់យកហ្វាយ ca.pem ពីក្នុង Folder ដើមផ្ទាល់តែម្ដង
             'options' => extension_loaded('pdo_mysql') ? [
                 Mysql::ATTR_SSL_CA => base_path('ca.pem'),
+                PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
             ] : [],
         ],
 

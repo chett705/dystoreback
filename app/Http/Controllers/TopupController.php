@@ -106,14 +106,11 @@ class TopupController extends Controller
             ]);
 
             $transactionId = $validated['transaction_id'];
-            if (str_starts_with($transactionId, '#')) {
-                $transactionId = ltrim($transactionId, '#');
-            }
-            $transactionId = trim($transactionId);
+            $cleanWebhookKey = trim(str_replace('#', '', $transactionId));
 
-            $order = TopupOrder::where('gateway_transaction_id', $transactionId)
-                ->orWhere('gateway_transaction_id', '#' . $transactionId)
-                ->orWhere('order_no', $transactionId)
+            $order = TopupOrder::where('gateway_transaction_id', $cleanWebhookKey)
+                ->orWhere('gateway_transaction_id', '#' . $cleanWebhookKey)
+                ->orWhere('order_no', $cleanWebhookKey)
                 ->first();
 
             if (!$order) {

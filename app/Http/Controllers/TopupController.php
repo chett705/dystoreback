@@ -205,81 +205,101 @@ class TopupController extends Controller
      */
     public function khqrWebhook(Request $request): JsonResponse
     {
-        Log::info('KHQR Webhook raw details:', $request->all());
+        // 1. បោះ Log មើលទិន្នន័យដើមដែលធនាគារបាញ់មកភ្លាមៗ ដើម្បីងាយស្រួលផ្ទៀងផ្ទាត់
+        Log::info('🎯 WEBHOOK HIT FROM BANK:', $request->all());
 
-        $validated = $request->validate([
-            'transaction_id' => ['required', 'string'],
-            'status'         => ['required', 'string'],
-            'amount'         => ['nullable', 'numeric'],
-        ]);
-
-        $transactionId = $validated['transaction_id'];
-
-        // 🎯 ដំណោះស្រាយការពារ៖ ប្រសិនបើមានសញ្ញា # មកពីធនាគារ (ដូចជា #100FT...) គឺត្រូវកាត់វាចោលភ្លាម
-        if (str_starts_with($transactionId, '#')) {
-            $transactionId = ltrim($transactionId, '#');
-        }
-        $transactionId = trim($transactionId);
-
-        // ទាញយកទិន្នន័យបណ្ដោះអាសន្នចេញពី Cache
-        $cached = Cache::get('temp_order_' . $transactionId);
-
-        if (!$cached) {
-            Log::error("Webhook Error: Session expired or order not found for Cleaned Transaction ID: " . $transactionId);
-            return response()->json(['message' => 'Order payload expired or not found'], 404);
-        }
-
-        // 🚀 ប្រសិនបើធនាគារបញ្ជាក់ថាបង់លុយរួចរាល់ពិតប្រាកដ (Pay Ready)
-        if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
-            
-            // 🎯 ទើបតែចាប់ផ្ដើមបង្កើត (Insert) ចូល Database ផ្លូវការនៅទីនេះបង!
-            $order = TopupOrder::create([
-                'order_no'               => $cached['order_no'],
-                'topup_game_id'          => $cached['topup_game_id'],
-                'topup_package_id'       => $cached['topup_package_id'],
-                'player_id'              => $cached['player_id'],
-                'player_username'        => $cached['player_username'],
-                'zone_id'                => $cached['zone_id'],
-                'payment_method'         => 'khqr',
-                'amount'                 => $cached['amount'],
-                'diamond_amount'         => $cached['diamond_amount'],
-                'status'                 => 'success', // ចូល DB ភ្លាម គឺជោគជ័យលោតបង្ហាញក្នុង Admin ហ្មង
-                'gateway_transaction_id' => $validated['transaction_id'],
-                'gateway_hash'           => $cached['hash'],
-                'gateway_payload'        => $cached['payload'],
-                'paid_at'                => now(),
-                'success_at'             => now(),
+        try {
+            $validated = $request->validate([
+                'transaction_id' => ['required', 'string'],
+                'status'         => ['required', 'string'],
+                'amount'         => ['nullable', 'numeric'],
             ]);
 
-            // សម្អាត Cache ចោលកុំឱ្យស្ទះ
-            Cache::forget('temp_order_' . $transactionId);
+            $transactionId = $validated['transaction_id'];
 
-            // បាញ់បញ្ជូន Diamonds ទៅកាន់ Server ហ្គេមរបស់អតិថិជន
-            try {
-                $supplierResult = $this->topupService->simulateSupplierFulfillment($order->load(['game', 'package']));
+            // 2. 🎯 ដំណោះស្រាយការពារ៖ ប្រសិនបើមានសញ្ញា # មកពីធនាគារ (ដូចជា #100FT...) គឺត្រូវកាត់វាចោលភ្លាម
+            if (str_starts_with($transactionId, '#')) {
+                $transactionId = ltrim($transactionId, '#');
+            }
+            $transactionId = trim($transactionId);
 
-                if (isset($supplierResult['success']) && $supplierResult['success']) {
-                    $order->update([
-                        'supplier_order_id' => $supplierResult['supplier_order_id'] ?? null,
-                        'supplier_payload'  => $supplierResult,
-                    ]);
-                    $this->topupService->sendTelegramAlert($order, 'success');
-                } else {
-                    $order->update([
-                        'status'           => 'failed',
-                        'failed_at'        => now(),
-                        'failure_reason'   => $supplierResult['message'] ?? 'Supplier API error.',
-                        'supplier_payload' => $supplierResult,
-                    ]);
-                    $this->topupService->sendTelegramAlert($order, 'failed');
-                }
-            } catch (\Throwable $e) {
-                Log::error("Supplier delivery failure: " . $e->getMessage());
+            // 3. ទាញយកទិន្នន័យបណ្ដោះអាសន្នចេញពី Cache
+            $cached = Cache::get('temp_order_' . $transactionId);
+
+            if (!$cached) {
+                Log::error("❌ Webhook Error: Cache expired or order not found for ID: " . $transactionId);
+                return response()->json(['message' => 'Order payload expired or not found'], 404);
             }
 
-            return response()->json(['message' => 'Payment Success & Data Stored.', 'order' => $order]);
-        }
+            // 4. 🚀 ប្រសិនបើធនាគារបញ្ជាក់ថាបង់លុយរួចរាល់ពិតប្រាកដ (Pay Ready)
+            if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
+                
+                // 🎯 ដំណោះស្រាយគន្លឹះ៖ ប្រើ updateOrCreate ជំនួស create ការពារការបាក់ដួលព្រោះជាន់ Unique Key
+                $order = TopupOrder::updateOrCreate(
+                    [
+                        // លក្ខខណ្ឌស្វែងរក៖ ប្រសិនបើមាន order_no នេះក្នុង DB ហើយ គឺឱ្យវា Update ស្ថានភាព មិនឱ្យបង្កើតថ្មីជាន់គ្នាទេ
+                        'order_no' => $cached['order_no']
+                    ],
+                    [
+                        'topup_game_id'          => $cached['topup_game_id'],
+                        'topup_package_id'       => $cached['topup_package_id'],
+                        'player_id'              => $cached['player_id'],
+                        'player_username'        => $cached['player_username'] ?? '',
+                        'zone_id'                => $cached['zone_id'] ?? '',
+                        'payment_method'         => 'khqr',
+                        'amount'                 => $cached['amount'],
+                        'diamond_amount'         => $cached['diamond_amount'],
+                        'status'                 => 'success', // ចូល DB ភ្លាម success ភ្លាម លោតបង្ហាញក្នុង Admin ហ្មង
+                        'gateway_transaction_id' => $validated['transaction_id'],
+                        'gateway_hash'           => $cached['hash'] ?? null,
+                        'gateway_payload'        => $cached['payload'] ?? null,
+                        'paid_at'                => now(),
+                        'success_at'             => now(),
+                    ]
+                );
 
-        return response()->json(['message' => 'Payment status is non-success.'], 400);
+                // សម្អាត Cache ចោលកុំឱ្យស្ទះ
+                Cache::forget('temp_order_' . $transactionId);
+                Log::info("✅ Order successfully stored/updated in DB. ID: " . $order->id);
+
+                // 5. បាញ់បញ្ជូន Diamonds ទៅកាន់ Server ហ្គេមរបស់អតិថិជន
+                try {
+                    $supplierResult = $this->topupService->simulateSupplierFulfillment($order->load(['game', 'package']));
+
+                    if (isset($supplierResult['success']) && $supplierResult['success']) {
+                        $order->update([
+                            'supplier_order_id' => $supplierResult['supplier_order_id'] ?? null,
+                            'supplier_payload'  => $supplierResult,
+                        ]);
+                        $this->topupService->sendTelegramAlert($order, 'success');
+                    } else {
+                        $order->update([
+                            'status'           => 'failed',
+                            'failed_at'        => now(),
+                            'failure_reason'   => $supplierResult['message'] ?? 'Supplier API error.',
+                            'supplier_payload' => $supplierResult,
+                        ]);
+                        $this->topupService->sendTelegramAlert($order, 'failed');
+                    }
+                } catch (\Throwable $e) {
+                    Log::error("⚠️ Supplier delivery failure: " . $e->getMessage());
+                }
+
+                return response()->json(['success' => true, 'message' => 'Payment Success & Data Stored.', 'order' => $order], 200);
+            }
+
+            return response()->json(['message' => 'Payment status is non-success.'], 400);
+
+        } catch (\Throwable $criticalException) {
+            // 🎯 បង្កើត Log ដេញចាប់កំហុសពិស្តារ ករណី Server មានបញ្ហា
+            Log::error("🚨 CRITICAL WEBHOOK EXCEPTION: " . $criticalException->getMessage(), [
+                'trace' => $criticalException->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Critical Server Error inside Webhook logic.',
+                'error'   => $criticalException->getMessage()
+            ], 500);
+        }
     }
 }

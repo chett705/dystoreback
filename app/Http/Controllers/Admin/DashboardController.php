@@ -22,6 +22,7 @@ class DashboardController extends Controller
             ->sum('amount');
 
         return response()->json([
+            'success' => true,
             'stats' => [
                 'games' => TopupGame::count(),
                 'packages' => TopupPackage::count(),
@@ -41,11 +42,11 @@ class DashboardController extends Controller
                 ->orderBy('sort_order')
                 ->get(),
             'orders' => TopupOrder::query()
-                ->with(['game', 'package'])
+                ->with(['game', 'package']) // 🎯 ត្រូវប្រាកដថាមាន Relationship game និង package ក្នុង Model
                 ->latest()
                 ->limit(100)
                 ->get(),
-        ]);
+        ], 200);
     }
 
     /**
@@ -72,14 +73,12 @@ class DashboardController extends Controller
     }
 
     /**
-     * 🔄 3. មុខងារថ្មី៖ កែប្រែ/បច្ចុប្បន្នភាពព័ត៌មានហ្គេម (Update Game)
+     * 🔄 3. មុខងារកែប្រែ/បច្ចុប្បន្នភាពព័ត៌មានហ្គេម (Update Game)
      */
-public function updateGame(Request $request, $id): JsonResponse
+    public function updateGame(Request $request, $id): JsonResponse
     {
-        // 🎯 ដំណោះស្រាយគន្លឹះ៖ បង្ខំឱ្យស្វែងរកតាម ID (Primary Key) នៅក្នុង Database ចំៗតែម្ដង ទោះផ្ទាំង Shop ជាប់ច្បាប់ binding ផ្សេងក៏ដោយ
-        $game = \App\Models\TopupGame::query()->findOrFail($id);
+        $game = TopupGame::query()->findOrFail($id);
 
-        // ឆែក Validation (អនុញ្ញាតឱ្យរក្សាទុក code ដដែលបាន ដោយមិនទាស់ unique class id ខ្លួនឯង)
         $validated = $request->validate([
             'code' => ['required', 'string', 'max:191', 'regex:/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', 'unique:topup_games,code,' . $game->id],
             'name' => ['required', 'string', 'max:255'],
@@ -112,7 +111,6 @@ public function updateGame(Request $request, $id): JsonResponse
             'is_active'      => ['nullable', 'boolean'],
         ]);
 
-        // បង្កើតឈ្មោះ Auto-generate បើក្នុង React Form អត់មានបញ្ជូន Name មក
         $packageName = $request->filled('name') 
             ? trim($validated['name']) 
             : $validated['diamond_amount'] . ' Diamonds';
@@ -165,7 +163,7 @@ public function updateGame(Request $request, $id): JsonResponse
     }
 
     /**
-     * 🔄 6. មុខងារកែប្រែស្ថានភាព Order (Update Order & Nullable Username)
+     * ✏️ 6. មុខងារកែប្រែស្ថានភាព Order ពីផ្ទាំងចាស់ដោយដៃ
      */
     public function updateOrder(Request $request, TopupOrder $order): JsonResponse
     {
@@ -186,7 +184,7 @@ public function updateGame(Request $request, $id): JsonResponse
 
         return response()->json([
             'message' => 'Order updated successfully.',
-            'data'    => $order->fresh(['game', 'package']),
+            'order'    => $order->fresh(['game', 'package']),
         ]);
     }
 }

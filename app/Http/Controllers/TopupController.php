@@ -52,7 +52,7 @@ class TopupController extends Controller
     }
 
     /**
-     * 🔍 មុខងារពិនិត្យមើលឈ្មោះអ្នកលេង
+     * 🔍 មុខងារពិនិត្យមើលឈ្មោះអ្នកលេង (Player ID Lookup)
      */
     public function checkUsername(Request $request): JsonResponse
     {
@@ -79,7 +79,7 @@ class TopupController extends Controller
     }
 
     /**
-     * 🛒 មុខងារបង្កើតលីង QR (មិនទាន់រក្សាទុកក្នុង Database ទេ គឺចាំបង់លុយរួចទើបចូល)
+     * 🛒 មុខងារបង្កើតលីង QR (រក្សាទុកក្នុង Cache សិន មិនទាន់ចូល Database ទេ)
      */
     public function createOrder(Request $request): JsonResponse
     {
@@ -96,7 +96,7 @@ class TopupController extends Controller
             $game = TopupGame::query()->where('code', strtolower($validated['game_code']))->firstOrFail();
             $package = TopupPackage::query()->where('id', $validated['package_id'])->firstOrFail();
 
-            // 🎯 បង្កើតម៉ូដែលបណ្ដោះអាសន្ន មិនទាន់ចុះ DB ឡើយ
+            // 🎯 បង្កើត Model Temporary មិនទាន់សរសេរចូល Database (Admin មិនទាន់ឃើញទេ)
             $tempOrder = new TopupOrder([
                 'order_no'         => 'ORD_' . now()->format('YmdHis') . '_' . Str::upper(Str::random(8)),
                 'topup_game_id'    => $game->id,
@@ -110,18 +110,24 @@ class TopupController extends Controller
                 'status'           => 'pending',
             ]);
 
-            // 🚀 បាញ់សុំលីង QR ពីធនាគារ
+            // 🚀 បាញ់សុំលីង QR បង់លុយពីធនាគារ
             [$checkoutUrl, $paymentData] = $this->topupService->buildKhqrCheckout($tempOrder);
             
             $transactionId = $paymentData['transaction_id'] ?? $tempOrder->order_no;
 
-            // 🎯 រក្សាទុកព័ត៌មានទិញចូលទៅក្នុង Cache បណ្ដោះអាសន្នរយៈពេល ៣០នាទី (Admin មិនទាន់ឃើញទេ)
-            Cache::put('temp_order_' . $transactionId, [
+            // 🎯 ដំណោះស្រាយ៖ សម្អាតសញ្ញា # ចេញ និងប្ដូរទៅជា Lowercase មុនដាក់ចូល Cache
+            if (str_starts_with($transactionId, '#')) {
+                $transactionId = ltrim($transactionId, '#');
+            }
+            $cleanCacheKey = strtolower(trim($transactionId));
+
+            // រក្សាទុកក្នុង Cache បណ្ដោះអាសន្នរយៈពេល ៣០ នាទី
+            Cache::put('temp_order_' . $cleanCacheKey, [
                 'order_no'         => $tempOrder->order_no,
                 'topup_game_id'    => $game->id,
                 'topup_package_id' => $package->id,
                 'player_id'        => $validated['player_id'],
-                'player_username'  => $validated['player_username'] ?? null,
+                'player_username'  => $validated['player_username'] ?? '',
                 'zone_id'          => $validated['zone_id'] ?? '',
                 'amount'           => $package->price,
                 'diamond_amount'   => $package->diamond_amount,
@@ -153,7 +159,7 @@ class TopupController extends Controller
     }
 
     /**
-     * ⚡ មុខងារតេស្ត Bypass បង្ខំឱ្យ Order ទៅជា Success (សម្រាប់ Admin វាយបញ្ចូលករណីចាំបាច់)
+     * ⚡ មុខងារតេស្ត Bypass បង្ខំឱ្យ Order ទៅជា Success (សម្រាប់ផ្ទាំង Admin Panel)
      */
     public function manualVerifyOrder(Request $request, $id): JsonResponse
     {
@@ -170,7 +176,7 @@ class TopupController extends Controller
                 $this->topupService->simulateSupplierFulfillment($order->load(['game', 'package']));
                 $this->topupService->sendTelegramAlert($order, 'success');
             } catch (\Throwable $e) {
-                Log::error("Supplier API Fulfillment error: " . $e->getMessage());
+                Log::error("Supplier API Fulfillment error during bypass: " . $e->getMessage());
             }
         }
 
@@ -186,7 +192,7 @@ class TopupController extends Controller
     }
 
     /**
-     * ❌ មុខងារលុប Order មួយចោលពី Database
+     * ❌ មុខងារលុប Order ចេញពី Database (សម្រាប់ប៊ូតុងលុបពណ៌ក្រហមលើ Admin)
      */
     public function destroyOrder($id): JsonResponse
     {
@@ -201,11 +207,10 @@ class TopupController extends Controller
 
     /**
      * 🔔 ប្រព័ន្ធស្ទាក់ចាប់ការបាញ់លុយពីធនាគារ (KHQR Webhook)
-     * ➔ ទើបតែរក្សាទុក (Insert) ចូល Database ផ្លូវការជា "success" ពេលបង់លុយរួច (Pay Ready)
+     * ➔ បង់លុយរួចរាល់ពិតប្រាកដ ទើបបង្កើតចូល DB ទៅជា "success" និងលោតបង្ហាញក្នុង Admin ភ្លាមៗ
      */
     public function khqrWebhook(Request $request): JsonResponse
     {
-        // 1. បោះ Log មើលទិន្នន័យដើមដែលធនាគារបាញ់មកភ្លាមៗ ដើម្បីងាយស្រួលផ្ទៀងផ្ទាត់
         Log::info('🎯 WEBHOOK HIT FROM BANK:', $request->all());
 
         try {
@@ -217,27 +222,26 @@ class TopupController extends Controller
 
             $transactionId = $validated['transaction_id'];
 
-            // 2. 🎯 ដំណោះស្រាយការពារ៖ ប្រសិនបើមានសញ្ញា # មកពីធនាគារ (ដូចជា #100FT...) គឺត្រូវកាត់វាចោលភ្លាម
+            // 🎯 ដំណោះស្រាយ៖ ចម្រោះកាត់សញ្ញា # ចេញ និងប្ដូរទៅជា Lowercase ឱ្យស៊ីគ្នាជាមួយ Cache Key 
             if (str_starts_with($transactionId, '#')) {
                 $transactionId = ltrim($transactionId, '#');
             }
-            $transactionId = trim($transactionId);
+            $cleanWebhookKey = strtolower(trim($transactionId));
 
-            // 3. ទាញយកទិន្នន័យបណ្ដោះអាសន្នចេញពី Cache
-            $cached = Cache::get('temp_order_' . $transactionId);
+            // ទាញយកទិន្នន័យបណ្ដោះអាសន្នចេញពី Cache
+            $cached = Cache::get('temp_order_' . $cleanWebhookKey);
 
             if (!$cached) {
-                Log::error("❌ Webhook Error: Cache expired or order not found for ID: " . $transactionId);
+                Log::error("❌ Webhook Error: Cache Key expired or mismatch: temp_order_" . $cleanWebhookKey);
                 return response()->json(['message' => 'Order payload expired or not found'], 404);
             }
 
-            // 4. 🚀 ប្រសិនបើធនាគារបញ្ជាក់ថាបង់លុយរួចរាល់ពិតប្រាកដ (Pay Ready)
+            // ប្រសិនបើធនាគារបញ្ជាក់ថាបង់លុយរួចរាល់ពិតប្រាកដ (Pay Ready)
             if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
                 
-                // 🎯 ដំណោះស្រាយគន្លឹះ៖ ប្រើ updateOrCreate ជំនួស create ការពារការបាក់ដួលព្រោះជាន់ Unique Key
+                // 🎯 ដំណោះស្រាយ៖ ប្រើ updateOrCreate ជំនួស create ការពារការបាក់ដួល Unique Key ពេល Webhook បាញ់មកជាន់គ្នា
                 $order = TopupOrder::updateOrCreate(
                     [
-                        // លក្ខខណ្ឌស្វែងរក៖ ប្រសិនបើមាន order_no នេះក្នុង DB ហើយ គឺឱ្យវា Update ស្ថានភាព មិនឱ្យបង្កើតថ្មីជាន់គ្នាទេ
                         'order_no' => $cached['order_no']
                     ],
                     [
@@ -249,7 +253,7 @@ class TopupController extends Controller
                         'payment_method'         => 'khqr',
                         'amount'                 => $cached['amount'],
                         'diamond_amount'         => $cached['diamond_amount'],
-                        'status'                 => 'success', // ចូល DB ភ្លាម success ភ្លាម លោតបង្ហាញក្នុង Admin ហ្មង
+                        'status'                 => 'success', // 🚀 ចូល Database ជា success ភ្លាមៗ
                         'gateway_transaction_id' => $validated['transaction_id'],
                         'gateway_hash'           => $cached['hash'] ?? null,
                         'gateway_payload'        => $cached['payload'] ?? null,
@@ -258,11 +262,11 @@ class TopupController extends Controller
                     ]
                 );
 
-                // សម្អាត Cache ចោលកុំឱ្យស្ទះ
-                Cache::forget('temp_order_' . $transactionId);
-                Log::info("✅ Order successfully stored/updated in DB. ID: " . $order->id);
+                // សម្អាត Cache ចោលកុំឱ្យស្ទះ Memory
+                Cache::forget('temp_order_' . $cleanWebhookKey);
+                Log::info("✅ Webhook processed successfully. Order Stored ID: " . $order->id);
 
-                // 5. បាញ់បញ្ជូន Diamonds ទៅកាន់ Server ហ្គេមរបស់អតិថិជន
+                // បាញ់បញ្ជូន Diamonds ទៅកាន់ Server ហ្គេមរបស់អតិថិជន
                 try {
                     $supplierResult = $this->topupService->simulateSupplierFulfillment($order->load(['game', 'package']));
 
@@ -281,8 +285,8 @@ class TopupController extends Controller
                         ]);
                         $this->topupService->sendTelegramAlert($order, 'failed');
                     }
-                } catch (\Throwable $e) {
-                    Log::error("⚠️ Supplier delivery failure: " . $e->getMessage());
+                } catch (\Throwable $supplierEx) {
+                    Log::error("⚠️ Supplier API fulfillment failed: " . $supplierEx->getMessage());
                 }
 
                 return response()->json(['success' => true, 'message' => 'Payment Success & Data Stored.', 'order' => $order], 200);
@@ -291,7 +295,6 @@ class TopupController extends Controller
             return response()->json(['message' => 'Payment status is non-success.'], 400);
 
         } catch (\Throwable $criticalException) {
-            // 🎯 បង្កើត Log ដេញចាប់កំហុសពិស្តារ ករណី Server មានបញ្ហា
             Log::error("🚨 CRITICAL WEBHOOK EXCEPTION: " . $criticalException->getMessage(), [
                 'trace' => $criticalException->getTraceAsString()
             ]);

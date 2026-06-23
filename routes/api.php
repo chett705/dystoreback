@@ -16,6 +16,8 @@ Route::prefix('topup')->group(function () {
     Route::post('/check-username', [TopupController::class, 'checkUsername']);
     Route::post('/orders', [TopupController::class, 'createOrder']);
     Route::get('/orders/{order}', [TopupController::class, 'showOrder']);
+    // ប្រសិនបើកូដនៅក្នុង routes/api.php មិនទាន់មាន Group 'topup' ទេ៖
+Route::post('/mlbb/check-id', [TopupController::class, 'checkUsername']);
 });
 
 /*

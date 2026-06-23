@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
 
 class TopupController extends Controller
 {
@@ -17,6 +18,9 @@ class TopupController extends Controller
     {
     }
 
+    /**
+     * បង្ហាញបញ្ជីហ្គេមទាំងអស់ដែលកំពុងបើកដំណើរការ
+     */
     public function catalog(): JsonResponse
     {
         $games = TopupGame::query()
@@ -28,6 +32,9 @@ class TopupController extends Controller
         return response()->json(['data' => $games]);
     }
 
+    /**
+     * បង្ហាញព័ត៌មានហ្គេមលម្អិតតាមរយៈ ID ឬ Code
+     */
     public function showGame($idOrCode): JsonResponse
     {
         $game = TopupGame::query()->where('id', $idOrCode)->orWhere('code', $idOrCode)->firstOrFail();
@@ -35,18 +42,84 @@ class TopupController extends Controller
         return response()->json(['data' => $game]);
     }
 
+    /**
+     * 🎯 មុខងារ Check ID (ផ្ទៀងផ្ទាត់ឈ្មោះគណនីហ្គេមពិតប្រាកដ)
+     */
     public function checkUsername(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'game_code' => ['required', 'string', 'exists:topup_games,code'],
+            'game_code' => ['required', 'string'],
             'player_id' => ['required', 'string'],
             'zone_id'   => ['nullable', 'string'], 
         ]);
 
-        $lookup = $this->topupService->lookupGameUsername($validated['game_code'], $validated['player_id'], $validated['zone_id'] ?? '');
-        return response()->json(['message' => 'Done', 'result' => $lookup]);
+        try {
+            $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
+            $secretKey = env('FLASH_TOPUP_SECRET_KEY');
+            $timestamp = time(); 
+            $nonce     = Str::random(16); 
+
+            $path = '/api/reseller/v2/check-id';
+            $method = 'POST';
+
+            $body = [
+                'user_id'         => trim($validated['player_id']),
+                'server_id'       => trim($validated['zone_id'] ?? ''),
+                'validation_code' => strtolower(trim($validated['game_code'])),
+            ];
+
+            $bodyJson = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $bodyHash = hash('sha256', $bodyJson);
+
+            $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
+            $signature = hash_hmac('sha256', $payloadString, $secretKey);
+
+            $response = Http::withHeaders([
+                'Content-Type'    => 'application/json',
+                'X-FT-API-ID'     => $apiId,
+                'X-FT-Timestamp'  => $timestamp,
+                'X-FT-Nonce'      => $nonce,
+                'X-FT-Signature'  => $signature,
+            ])
+            ->withoutVerifying() // 🎯 ការពារបញ្ហា cURL error 60 លើម៉ាស៊ីន Local (XAMPP/Laragon)
+            ->post('https://api.flashtopup.com' . $path, $body);
+
+            if ($response->successful()) {
+                $apiData = $response->json();
+                
+                // 🎯 ចាប់យក "account_name" ស្របតាម Sample Webhook Payload ផ្លូវការរបស់ Flash Topup
+                $playerName = $apiData['account_name'] 
+                              ?? $apiData['data']['account_name'] 
+                              ?? $apiData['player_name'] 
+                              ?? null;
+
+                return response()->json([
+                    'message' => 'Done',
+                    'result' => [
+                        'player_name' => $playerName,
+                        'username'    => $playerName, 
+                        'name'        => $playerName, 
+                        'raw_data'    => $apiData     
+                    ]
+                ]);
+            }
+
+            $errorData = $response->json();
+            $errorMessage = $errorData['message'] ?? $errorData['error'] ?? 'API Rejected';
+
+            return response()->json([
+                'message' => $errorMessage, 
+                'error' => $errorData
+            ], 400);
+
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Error', 'error' => $e->getMessage()], 500);
+        }
     }
 
+    /**
+     * បង្កើត Order ថ្មីក្នុងប្រព័ន្ធ និងទាញយក KHQR សម្រាប់ឱ្យអតិថិជនស្កែន
+     */
     public function createOrder(Request $request): JsonResponse
     {
         try {
@@ -90,11 +163,17 @@ class TopupController extends Controller
         }
     }
 
+    /**
+     * បង្ហាញព័ត៌មានលម្អិតនៃ Order នីមួយៗ
+     */
     public function showOrder(TopupOrder $order): JsonResponse
     {
         return response()->json(['data' => $order->load(['game', 'package'])]);
     }
 
+    /**
+     * 🎯 Webhook ទទួលទិន្នន័យពីធនាគារនៅពេលស្កែនជោគជ័យ រួចបាញ់ពេជ្រពិតៗទៅ Flash Topup
+     */
     public function khqrWebhook(Request $request): JsonResponse
     {
         Log::info('🎯 WEBHOOK HIT FROM BANK:', $request->all());
@@ -118,15 +197,63 @@ class TopupController extends Controller
             }
 
             if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
+                
+                if ($order->status === 'success') {
+                    return response()->json(['success' => true, 'message' => 'Order already processed']);
+                }
+
                 $order->update([
                     'status'     => 'success',
                     'paid_at'    => now(),
                     'success_at' => now(),
                 ]);
 
+                // 🚀 ដំណើរការបាញ់ពេជ្រទៅកាន់ Flash Topup API ផ្លូវការ
                 try {
-                    $this->topupService->simulateSupplierFulfillment($order->load(['game', 'package']));
-                } catch (\Throwable $ex) {}
+                    $order->load(['game', 'package']);
+                    $serviceCode = $order->package->sku ?? $order->package->code; 
+
+                    $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
+                    $secretKey = env('FLASH_TOPUP_SECRET_KEY');
+                    $timestamp = time(); 
+                    $nonce     = Str::random(16);
+
+                    $path = '/api/reseller/v2/order';
+                    $method = 'POST';
+
+                    $body = [
+                        'service_code' => $serviceCode,
+                        'reference_id' => $order->order_no, 
+                        'quantity'     => 1,
+                        'user_id'      => $order->player_id,
+                        'server_id'    => $order->zone_id,
+                    ];
+
+                    $bodyJson = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    $bodyHash = hash('sha256', $bodyJson);
+                    
+                    $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
+                    $signature = hash_hmac('sha256', $payloadString, $secretKey);
+
+                    $flashResponse = Http::withHeaders([
+                        'Content-Type'    => 'application/json',
+                        'X-FT-API-ID'     => $apiId,
+                        'X-FT-Timestamp'  => $timestamp,
+                        'X-FT-Nonce'      => $nonce,
+                        'X-FT-Signature'  => $signature,
+                    ])
+                    ->withoutVerifying() // 🎯 ការពារបញ្ហា SSL ពេលប្រព័ន្ធបាញ់បំពេញការទិញ (Fulfillment) ស្វ័យប្រវត្តិ
+                    ->post('https://api.flashtopup.com' . $path, $body);
+
+                    if ($flashResponse->successful()) {
+                        Log::info("🚀 Flash Topup Fulfillment Success: {$order->order_no}", $flashResponse->json());
+                    } else {
+                        Log::error("❌ Flash Topup Fulfillment Failed: {$order->order_no}", $flashResponse->json());
+                    }
+
+                } catch (\Throwable $ex) {
+                    Log::critical("🚨 Error calling Flash Topup API: " . $ex->getMessage());
+                }
 
                 return response()->json(['success' => true, 'message' => 'Paid Success', 'order' => $order]);
             }

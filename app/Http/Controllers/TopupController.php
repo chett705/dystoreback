@@ -81,13 +81,12 @@ class TopupController extends Controller
                 'X-FT-Nonce'      => $nonce,
                 'X-FT-Signature'  => $signature,
             ])
-            ->withoutVerifying() // 🎯 ការពារបញ្ហា cURL error 60 លើម៉ាស៊ីន Local (XAMPP/Laragon)
+            ->withoutVerifying() 
             ->post('https://api.flashtopup.com' . $path, $body);
 
             if ($response->successful()) {
                 $apiData = $response->json();
                 
-                // 🎯 ចាប់យក "account_name" ស្របតាម Sample Webhook Payload ផ្លូវការរបស់ Flash Topup
                 $playerName = $apiData['account_name'] 
                               ?? $apiData['data']['account_name'] 
                               ?? $apiData['player_name'] 
@@ -172,13 +171,30 @@ class TopupController extends Controller
     }
 
     /**
-     * 🎯 Webhook ទទួលទិន្នន័យពីធនាគារនៅពេលស្កែនជោគជ័យ រួចបាញ់ពេជ្រពិតៗទៅ Flash Topup
+     * 🎯 Webhook ទទួលទិន្នន័យពីធនាគារនៅពេលស្កែនជោគជ័យ រួចបាញ់ពេជ្រពិតៗទៅ Flash Topup ស្វ័យប្រវត្តិ
      */
     public function khqrWebhook(Request $request): JsonResponse
     {
-        Log::info('🎯 WEBHOOK HIT FROM BANK:', $request->all());
+        Log::info('🎯 WEBHOOK HIT FROM BANK OR FLASH TOPUP:', $request->all());
 
         try {
+            // ឆែកមើលបើវាជា Webhook ផ្ញើមកពី Flash Topup (ករណី Callback ស្ថានភាពកម្មង់ពេជ្រ)
+            if ($request->has('event') && $request->has('reference_id')) {
+                $referenceId = $request->input('reference_id');
+                $orderStatus = $request->input('order_status');
+
+                $order = TopupOrder::where('order_no', $referenceId)->first();
+                if (!$order) return response()->json(['message' => 'Order not found'], 404);
+
+                if (strtolower($orderStatus) === 'completed') {
+                    if ($order->status === 'success') return response()->json(['success' => true]);
+                    $order->update(['status' => 'success', 'paid_at' => now(), 'success_at' => now()]);
+                    return response()->json(['success' => true, 'message' => 'Fulfillment Completed via Webhook']);
+                }
+                return response()->json(['message' => 'Status handled', 'status' => $orderStatus]);
+            }
+
+            // ករណី Webhook ផ្ញើមកពីប្រព័ន្ធធនាគារ (បង់លុយរួច រួចរុញទិន្នន័យទៅ Flash Topup)
             $validated = $request->validate([
                 'transaction_id' => ['required', 'string'],
                 'status'         => ['required', 'string'],
@@ -242,7 +258,7 @@ class TopupController extends Controller
                         'X-FT-Nonce'      => $nonce,
                         'X-FT-Signature'  => $signature,
                     ])
-                    ->withoutVerifying() // 🎯 ការពារបញ្ហា SSL ពេលប្រព័ន្ធបាញ់បំពេញការទិញ (Fulfillment) ស្វ័យប្រវត្តិ
+                    ->withoutVerifying() 
                     ->post('https://api.flashtopup.com' . $path, $body);
 
                     if ($flashResponse->successful()) {

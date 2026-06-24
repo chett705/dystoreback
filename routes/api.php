@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AuthController as AdminAuthController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\TopupController;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -26,6 +27,12 @@ Route::post('/mlbb/check-id', [TopupController::class, 'checkUsername']);
 | 🔔 Public Route សម្រាប់ធនាគារបាញ់លុយចូល (KHQR Webhook)
 |--------------------------------------------------------------------------
 */
+Route::get('/clear-route', function () {
+    Artisan::call('route:clear');
+    Artisan::call('config:clear');
+    return "Route & Config Cached Cleared Successfully!";
+});
+
 Route::post('/khqr/webhook', [TopupController::class, 'khqrWebhook']);
 Route::post('/flashtopup/webhook', [TopupController::class, 'khqrWebhook']);
 /*

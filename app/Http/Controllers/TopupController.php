@@ -44,13 +44,12 @@ class TopupController extends Controller
 
     public function checkUsername(Request $request): JsonResponse
     {
-        // ១. ចាប់យកតម្លៃស្នូលសម្រាប់ Body
+        // ១. ចាប់យកតម្លៃស្នូលពី Client (ទោះផ្ញើ Key ឈ្មោះអ្វីមកក៏ដោយ)
         $gameCode = $request->input('game_code') ?? $request->input('validation_code');
         $playerId = $request->input('player_id') ?? $request->input('user_id');
         $zoneId   = $request->input('zone_id') ?? $request->input('server_id') ?? '';
 
-        // ២. 🎯 ចាប់យកម៉ោង និង Nonce ដែលផ្ញើចេញពី Client (Postman ឬ React Frontend) 
-        // បើគ្មានផ្ញើមកទេ ឱ្យវាយកម៉ោង Server បច្ចុប្បន្នអូតូ
+        // ២. ចាប់យកម៉ោង និង Nonce ផ្ញើមកពី Client (Postman ឬ Frontend) ដើម្បីឱ្យស៊ីគ្នាដាច់ខាត
         $timestamp = $request->header('X-FT-Timestamp') ?? $request->input('ft_timestamp') ?? time();
         $nonce     = $request->header('X-FT-Nonce') ?? $request->input('ft_nonce') ?? Str::random(16);
 
@@ -65,10 +64,20 @@ class TopupController extends Controller
             $path = '/api/reseller/v2/check-id'; 
             $method = 'POST';
 
-            // ៣. បង្ហាប់ទិន្នន័យ JSON គ្រាប់ស្ងួតលំដាប់ A-Z
-            $rawJsonBody = '{"server_id":"' . trim($zoneId) . '","user_id":"' . trim($playerId) . '","validation_code":"' . strtolower(trim($gameCode)) . '"}';
+            // ៣. 🎯 រៀបចំកញ្ចប់ Body ទៅកាន់ FlashTopUp ដោយប្រើឈ្មោះ Key ផ្លូវការរបស់គេ
+            $body = [
+                'server_id'       => trim($zoneId),
+                'user_id'         => trim($playerId),
+                'validation_code' => strtolower(trim($gameCode)),
+            ];
 
-            // ៤. 🎯 គណនា Signature ដោយប្រើប្រាស់ម៉ោង និង Nonce រួមគ្នាជាមួយ Client បេះបិទ
+            // ៤. 🎯 តម្រៀប Key ពី A-Z (server_id -> user_id -> validation_code) 
+            ksort($body);
+
+            // ៥. 🎯 បម្លែងជា JSON String គ្រាប់ស្ងួត គ្មាន Space ចន្លោះ (ដូចគ្នាទៅនឹង JSON.stringify របស់ JavaScript)
+            $rawJsonBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+            // ៦. គណនា Signature តាមរូបមន្ត V2 ខណ្ឌដោយសញ្ញា |
             $payloadString = $method . '|' . $path . '|' . $timestamp . '|' . $nonce . '|' . $rawJsonBody;
             $signature = hash_hmac('sha256', $payloadString, $secretKey);
 

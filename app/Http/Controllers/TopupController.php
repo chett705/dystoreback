@@ -42,15 +42,17 @@ class TopupController extends Controller
         return response()->json(['data' => $game]);
     }
 
-    /**
-     * 🎯 មុខងារ Check ID (ដំណោះស្រាយផ្ដាច់ព្រ័ត្រ - ធានាត្រូវ Signature ១០០%)
-     */
     public function checkUsername(Request $request): JsonResponse
     {
-        // ទទួលយកតម្លៃទោះបីជាផ្ញើមកក្នុងឈ្មោះ Key ណាក៏ដោយ
+        // ១. ចាប់យកតម្លៃស្នូលសម្រាប់ Body
         $gameCode = $request->input('game_code') ?? $request->input('validation_code');
         $playerId = $request->input('player_id') ?? $request->input('user_id');
         $zoneId   = $request->input('zone_id') ?? $request->input('server_id') ?? '';
+
+        // ២. 🎯 ចាប់យកម៉ោង និង Nonce ដែលផ្ញើចេញពី Client (Postman ឬ React Frontend) 
+        // បើគ្មានផ្ញើមកទេ ឱ្យវាយកម៉ោង Server បច្ចុប្បន្នអូតូ
+        $timestamp = $request->header('X-FT-Timestamp') ?? $request->input('ft_timestamp') ?? time();
+        $nonce     = $request->header('X-FT-Nonce') ?? $request->input('ft_nonce') ?? Str::random(16);
 
         if (!$gameCode || !$playerId) {
             return response()->json(['message' => 'game_code and player_id are required.'], 422);
@@ -59,17 +61,14 @@ class TopupController extends Controller
         try {
             $apiId     = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
             $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY'));
-            $timestamp = time(); 
-            $nonce     = Str::random(16); 
 
             $path = '/api/reseller/v2/check-id'; 
             $method = 'POST';
 
-            // 🎯 បង្ហាប់តម្លៃទៅជាទម្រង់ JSON String គ្រាប់ស្ងួត ចងដៃ Key តាមលំដាប់ A-Z ដោយដៃផ្ទាល់
-            // វិធីនេះធានាថា JSON ចេញមកមានទ្រង់ទ្រាយដូច Postman ១០០% មិនប្រែប្រួលតាម Framework ឡើយ
+            // ៣. បង្ហាប់ទិន្នន័យ JSON គ្រាប់ស្ងួតលំដាប់ A-Z
             $rawJsonBody = '{"server_id":"' . trim($zoneId) . '","user_id":"' . trim($playerId) . '","validation_code":"' . strtolower(trim($gameCode)) . '"}';
 
-            // 🎯 គណនា Signature តាមរូបមន្ត V2 ខណ្ឌដោយសញ្ញា | បេះបិទដូច Postman Pre-request Script
+            // ៤. 🎯 គណនា Signature ដោយប្រើប្រាស់ម៉ោង និង Nonce រួមគ្នាជាមួយ Client បេះបិទ
             $payloadString = $method . '|' . $path . '|' . $timestamp . '|' . $nonce . '|' . $rawJsonBody;
             $signature = hash_hmac('sha256', $payloadString, $secretKey);
 

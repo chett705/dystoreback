@@ -45,7 +45,7 @@ class TopupController extends Controller
     /**
      * 🎯 មុខងារ Check ID (កែសម្រួលដោះស្រាយបញ្ហា INVALID_SIGNATURE ឱ្យត្រូវតាមស្តង់ដារ V2 ផ្លូវការ)
      */
-    public function checkUsername(Request $request): JsonResponse
+   public function checkUsername(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'game_code' => ['required', 'string'],
@@ -61,19 +61,26 @@ class TopupController extends Controller
             $path = '/api/reseller/v2/check-id';
             $method = 'POST';
 
-            // 🎯 រៀបចំ Key ឱ្យត្រូវបេះបិទទៅនឹងរូបភាពឯកសារ Postman Body របស់ FlashTopUp
+            // 1. បង្កើត Array ដើម
             $body = [
-                'user_id'         => trim($validated['player_id']),
                 'server_id'       => trim($validated['zone_id'] ?? ''),
+                'user_id'         => trim($validated['player_id']),
                 'validation_code' => strtolower(trim($validated['game_code'])),
             ];
 
-            // ហៅ Private Function ដើម្បីផលិត Signature ដែលមាន ksort រៀបលំដាប់រួចរាល់
-            $signature = $this->generateFlashTopupSignature($method, $path, $timestamp, $nonce, $body);
-
-            // 🎯 រៀបចំ Body ផ្ញើទៅ ត្រូវតែរៀបលំដាប់លំដោយ Key ដូចពេលផលិត Signature ដែរ (ksort ដូចគ្នា)
+            // 2. តម្រៀប Key ពី A-Z
             ksort($body);
 
+            // 3. បម្លែងទៅជា JSON String បេះបិទ ដើម្បីយកទៅប្រើប្រាស់ទាំងពីរផ្លូវ
+            $rawJsonBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+            // 4. គណនា Signature ដោយផ្ទាល់ជាមួយ JSON String ដែលបានរៀបចំរួច
+            $secretKey = env('FLASH_TOPUP_SECRET_KEY');
+            $bodyHash  = hash('sha256', $rawJsonBody);
+            $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
+            $signature = hash_hmac('sha256', $payloadString, $secretKey);
+
+            // 5. 🚀 បាញ់ទៅកាន់ FlashTopUp ដោយប្រើប្រាស់ withBody() ដើម្បីការពារកុំឱ្យទិន្នន័យ JSON ដូររូបរាង
             $response = Http::withHeaders([
                 'Content-Type'    => 'application/json',
                 'X-FT-API-ID'     => $apiId,
@@ -82,7 +89,8 @@ class TopupController extends Controller
                 'X-FT-Signature'  => $signature,
             ])
             ->withoutVerifying() 
-            ->post('https://api.flashtopup.com' . $path, $body);
+            ->withBody($rawJsonBody, 'application/json') // 🎯 បង្ខំផ្ញើចេញជា JSON String ដដែល
+            ->post('https://api.flashtopup.com' . $path);
 
             if ($response->successful()) {
                 $apiData = $response->json();

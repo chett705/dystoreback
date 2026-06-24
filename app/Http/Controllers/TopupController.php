@@ -63,7 +63,7 @@ class TopupController extends Controller
 
             // 🎯 កែសម្រួល៖ ប្តូរផ្លូវ Path មកជាលីងស្តង់ដារផ្លូវការ (គ្មាន reseller/v2)
             $path = '/api/v1/check-id'; 
-            $method = 'POST';
+            $method = 'GET';
 
             $body = [
                 'server_id'       => trim($zoneId),

@@ -177,4 +177,32 @@ class DashboardController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Order deleted successfully.'], 200);
     }
+    public function destroyGame($id): JsonResponse
+    {
+        try {
+            // 🚀 ១. ស្វែងរកទិន្នន័យហ្គេមតាមរយៈ ID ដែលបោះមកពី React
+            $game = TopupGame::query()->find($id);
+
+            if (!$game) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Game not found.'
+                ], 404);
+            }
+
+            // 🚀 ២. ធ្វើការលុបដាច់ចេញពី Database ជារៀងរហូត
+            $game->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Game deleted successfully.'
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete game: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

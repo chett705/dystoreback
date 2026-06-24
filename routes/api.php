@@ -18,7 +18,7 @@ Route::prefix('topup')->group(function () {
     Route::get('/orders/{order}', [TopupController::class, 'showOrder']);
     // ប្រសិនបើកូដនៅក្នុង routes/api.php មិនទាន់មាន Group 'topup' ទេ៖
 Route::post('/mlbb/check-id', [TopupController::class, 'checkUsername']);
-Route::post('/khqr/webhook', [TopupController::class, 'khqrWebhook']);
+// Route::post('/khqr/webhook', [TopupController::class, 'khqrWebhook']);
 });
 
 /*
@@ -43,6 +43,7 @@ Route::prefix('admin')->group(function () {
 
         Route::post('/games', [DashboardController::class, 'storeGame']);
         Route::patch('/games/{game}', [DashboardController::class, 'updateGame']);
+        Route::delete('/games/{id}', [DashboardController::class, 'destroyGame']);
 
         Route::post('/packages', [DashboardController::class, 'storePackage']);
         Route::patch('/packages/{package}', [DashboardController::class, 'updatePackage']);

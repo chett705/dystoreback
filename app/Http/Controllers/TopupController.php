@@ -55,7 +55,6 @@ class TopupController extends Controller
 
         try {
             $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
-            $secretKey = env('FLASH_TOPUP_SECRET_KEY');
             $timestamp = time(); 
             $nonce     = Str::random(16); 
 
@@ -68,11 +67,8 @@ class TopupController extends Controller
                 'validation_code' => strtolower(trim($validated['game_code'])),
             ];
 
-            $bodyJson = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $bodyHash = hash('sha256', $bodyJson);
-
-            $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
-            $signature = hash_hmac('sha256', $payloadString, $secretKey);
+            // ហៅ Private Function ដើម្បីផលិត Signature
+            $signature = $this->generateFlashTopupSignature($method, $path, $timestamp, $nonce, $body);
 
             $response = Http::withHeaders([
                 'Content-Type'    => 'application/json',
@@ -171,7 +167,6 @@ class TopupController extends Controller
     }
 
     /**
-   /**
      * 🎯 មុខងារទទួល Webhook ផ្លូវការ (រៀបចំឱ្យត្រូវជាមួយ /api/khqr/webhook របស់ Render)
      */
     public function khqrWebhook(Request $request): JsonResponse
@@ -179,7 +174,9 @@ class TopupController extends Controller
         Log::info('🎯 WEBHOOK HIT FROM BANK OR FLASH TOPUP:', $request->all());
 
         try {
+            // -----------------------------------------------------------------
             // ករណីទី១៖ Webhook ផ្ញើមកពី Flash Topup (Callback ស្ថានភាពកម្មង់ពេជ្រ)
+            // -----------------------------------------------------------------
             if ($request->has('event') && $request->has('reference_id')) {
                 $referenceId = $request->input('reference_id');
                 $orderStatus = $request->input('order_status');
@@ -193,17 +190,25 @@ class TopupController extends Controller
                     if ($order->status === 'success') {
                         return response()->json(['success' => true, 'message' => 'Already success']);
                     }
+                    
                     $order->update([
                         'status'     => 'success',
-                        'paid_at'    => now(),
                         'success_at' => now()
                     ]);
                     return response()->json(['success' => true, 'message' => 'Fulfillment Completed via Flash Topup Webhook']);
                 }
+
+                if (in_array(strtolower($orderStatus), ['failed', 'refunded', 'canceled'])) {
+                    $order->update(['status' => 'failed']);
+                    return response()->json(['success' => false, 'message' => 'Order marked as failed via Flash Topup']);
+                }
+
                 return response()->json(['message' => 'Status handled', 'status' => $orderStatus]);
             }
 
+            // -----------------------------------------------------------------
             // ករណីទី២៖ Webhook ផ្ញើមកពីប្រព័ន្ធធនាគារ (បង់លុយរួច រួចរុញទៅ Flash Topup)
+            // -----------------------------------------------------------------
             $validated = $request->validate([
                 'transaction_id' => ['required', 'string'],
                 'status'         => ['required', 'string'],
@@ -223,14 +228,14 @@ class TopupController extends Controller
 
             if (in_array(strtolower($validated['status']), ['success', 'paid', 'completed'], true)) {
                 
-                if ($order->status === 'success') {
-                    return response()->json(['success' => true, 'message' => 'Order already processed']);
+                if (in_array($order->status, ['processing', 'success'])) {
+                    return response()->json(['success' => true, 'message' => 'Order already processed or processing']);
                 }
 
+                // កែសម្រួល៖ ប្តូរទៅជា 'processing' សិន (បានលុយហើយ កំពុងបាញ់ពេជ្រ)
                 $order->update([
-                    'status'     => 'success',
-                    'paid_at'    => now(),
-                    'success_at' => now(),
+                    'status'  => 'processing',
+                    'paid_at' => now(),
                 ]);
 
                 // 🚀 ដំណើរការបាញ់ពេជ្រទៅកាន់ Flash Topup API
@@ -239,12 +244,10 @@ class TopupController extends Controller
                     $serviceCode = $order->package->sku ?? $order->package->code; 
 
                     $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
-                    $secretKey = env('FLASH_TOPUP_SECRET_KEY');
                     $timestamp = time(); 
                     $nonce     = Str::random(16);
-
-                    $path = '/api/reseller/v2/order';
-                    $method = 'POST';
+                    $path      = '/api/reseller/v2/order';
+                    $method    = 'POST';
 
                     $body = [
                         'service_code' => $serviceCode,
@@ -254,11 +257,7 @@ class TopupController extends Controller
                         'server_id'    => $order->zone_id,
                     ];
 
-                    $bodyJson = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    $bodyHash = hash('sha256', $bodyJson);
-                    
-                    $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
-                    $signature = hash_hmac('sha256', $payloadString, $secretKey);
+                    $signature = $this->generateFlashTopupSignature($method, $path, $timestamp, $nonce, $body);
 
                     $flashResponse = Http::withHeaders([
                         'Content-Type'    => 'application/json',
@@ -271,21 +270,36 @@ class TopupController extends Controller
                     ->post('https://api.flashtopup.com' . $path, $body);
 
                     if ($flashResponse->successful()) {
-                        Log::info("🚀 Flash Topup Fulfillment Success: {$order->order_no}", $flashResponse->json());
+                        Log::info("🚀 Flash Topup Fulfillment Success Initiated: {$order->order_no}", $flashResponse->json());
                     } else {
-                        Log::error("❌ Flash Topup Fulfillment Failed: {$order->order_no}", $flashResponse->json());
+                        Log::error("❌ Flash Topup Fulfillment API Refused: {$order->order_no}", $flashResponse->json());
+                        $order->update(['status' => 'manual_hold']);
                     }
 
                 } catch (\Throwable $ex) {
                     Log::critical("🚨 Error calling Flash Topup API: " . $ex->getMessage());
+                    $order->update(['status' => 'manual_hold']);
                 }
 
-                return response()->json(['success' => true, 'message' => 'Paid Success', 'order' => $order]);
+                return response()->json(['success' => true, 'message' => 'Payment recorded, Flash Topup API triggered', 'order' => $order]);
             }
 
             return response()->json(['message' => 'Non-success status'], 400);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * 🔐 Private Function សម្រាប់ជំនួយក្នុងការគណនា HMAC-SHA256 Signature របស់ FlashTopUp V2
+     */
+    private function generateFlashTopupSignature(string $method, string $path, int $timestamp, string $nonce, array $body): string
+    {
+        $secretKey = env('FLASH_TOPUP_SECRET_KEY');
+        $bodyJson  = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $bodyHash  = hash('sha256', $bodyJson);
+
+        $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
+        return hash_hmac('sha256', $payloadString, $secretKey);
     }
 }

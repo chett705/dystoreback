@@ -54,4 +54,9 @@ return [
         'chat_id' => env('TELEGRAM_CHAT_ID'),
     ],
 
+    'flash_topup' => [
+        'api_id' => env('FLASH_TOPUP_API_ID'),
+        'secret_key' => env('FLASH_TOPUP_SECRET_KEY'),
+    ],
+
 ];

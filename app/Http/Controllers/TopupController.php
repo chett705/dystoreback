@@ -18,8 +18,37 @@ class TopupController extends Controller
     {
     }
 
+    private function flashTopupCredentials(): array
+    {
+        $credentials = [
+            'api_id' => config('services.flash_topup.api_id'),
+            'secret_key' => config('services.flash_topup.secret_key'),
+        ];
+
+        if (blank($credentials['api_id']) || blank($credentials['secret_key'])) {
+            throw new \RuntimeException('FlashTopUp credentials are not configured.');
+        }
+
+        return $credentials;
+    }
+
+    private function canonicalFlashTopupBody(array $body): string|false
+    {
+        $body = array_filter($body, static fn ($value) => $value !== null && $value !== '');
+        ksort($body);
+
+        return json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    private function flashTopupSignature(string $method, string $path, int $timestamp, string $nonce, string $rawJsonBody, string $secretKey): string
+    {
+        $payloadString = $method . $path . $timestamp . $nonce . hash('sha256', $rawJsonBody);
+
+        return hash_hmac('sha256', $payloadString, trim($secretKey));
+    }
+
     /**
-     * បង្ហាញបញ្ជីហ្គេមទាំងអស់ដែលកំពុងបើកដំណើរការ
+     * áž”áž„áŸ’áž áž¶áž‰áž”áž‰áŸ’áž‡áž¸áž áŸ’áž‚áŸáž˜áž‘áž¶áŸ†áž„áž¢ážŸáŸ‹ážŠáŸ‚áž›áž€áŸ†áž–áž»áž„áž”áž¾áž€ážŠáŸ†ážŽáž¾ážšáž€áž¶ážš
      */
     public function catalog(): JsonResponse
     {
@@ -33,7 +62,7 @@ class TopupController extends Controller
     }
 
     /**
-     * បង្ហាញព័ត៌មានហ្គេមលម្អិតតាមរយៈ ID ឬ Code
+     * áž”áž„áŸ’áž áž¶áž‰áž–áŸážáŸŒáž˜áž¶áž“áž áŸ’áž‚áŸáž˜áž›áž˜áŸ’áž¢áž·ážážáž¶áž˜ážšáž™áŸˆ ID áž¬ Code
      */
     public function showGame($idOrCode): JsonResponse
     {
@@ -43,75 +72,73 @@ class TopupController extends Controller
     }
 
     /**
-     * 🎯 មុខងារ Check ID (ដំណោះស្រាយបញ្ហា INVALID_SIGNATURE ដោយតម្រៀប Key តាម Postman របស់ FlashTopUp)
+     * ðŸŽ¯ áž˜áž»ážáž„áž¶ážš Check ID (ážŠáŸ†ážŽáŸ„áŸ‡ážŸáŸ’ážšáž¶áž™áž”áž‰áŸ’áž áž¶ INVALID_SIGNATURE ážŠáŸ„áž™ážáž˜áŸ’ážšáŸ€áž” Key ážáž¶áž˜ Postman ážšáž”ážŸáŸ‹ FlashTopUp)
      */
     public function checkUsername(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'game_code' => ['required', 'string'],
             'player_id' => ['required', 'string'],
-            'zone_id'   => ['nullable', 'string'], 
+            'zone_id'   => ['nullable', 'string'],
         ]);
 
         try {
-            $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
-            $secretKey = env('FLASH_TOPUP_SECRET_KEY');
-            $timestamp = time(); 
-            $nonce     = Str::random(16); 
+            $credentials = $this->flashTopupCredentials();
+            $apiId = $credentials['api_id'];
+            $secretKey = $credentials['secret_key'];
+            $timestamp = time();
+            $nonce = Str::random(16);
 
             $path = '/api/reseller/v2/check-id';
             $method = 'POST';
 
-            // 🎯 រៀបចំ Key តាមលំដាប់លំដោយដែលបង្ហាញក្នុង Postman Body របស់ FlashTopUp បេះបិទ
             $body = [
+                'server_id'       => blank($validated['zone_id'] ?? null) ? null : trim($validated['zone_id']),
                 'user_id'         => trim($validated['player_id']),
-                'server_id'       => trim($validated['zone_id'] ?? ''),
                 'validation_code' => strtolower(trim($validated['game_code'])),
             ];
 
-            // បម្លែងទៅជា JSON String ភ្លាមៗ (មិនប្រើ ksort ឡើយ ដើម្បីរក្សាលំដាប់ខាងលើ)
-            $rawJsonBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $rawJsonBody = $this->canonicalFlashTopupBody($body);
+            if ($rawJsonBody === false) {
+                throw new \RuntimeException('Unable to encode FlashTopUp request body.');
+            }
 
-            // គណនា Signature
-            $bodyHash  = hash('sha256', $rawJsonBody);
-            $payloadString = $method . $path . $timestamp . $nonce . $bodyHash;
-            $signature = hash_hmac('sha256', $payloadString, $secretKey);
+            $signature = $this->flashTopupSignature($method, $path, $timestamp, $nonce, $rawJsonBody, (string) $secretKey);
 
-            // 🚀 បាញ់ទៅកាន់ FlashTopUp ជាមួយ Raw JSON String
             $response = Http::withHeaders([
-                'Content-Type'    => 'application/json',
-                'X-FT-API-ID'     => $apiId,
-                'X-FT-Timestamp'  => $timestamp,
-                'X-FT-Nonce'      => $nonce,
-                'X-FT-Signature'  => $signature,
+                'Content-Type'   => 'application/json',
+                'X-FT-API-ID'    => $apiId,
+                'X-FT-Timestamp' => $timestamp,
+                'X-FT-Nonce'     => $nonce,
+                'X-FT-Signature' => $signature,
             ])
-            ->withoutVerifying() 
+            ->withoutVerifying()
             ->withBody($rawJsonBody, 'application/json')
             ->post('https://api.flashtopup.com' . $path);
 
             if ($response->successful()) {
                 $apiData = $response->json();
-                
-                $playerName = $apiData['account_name'] 
-                              ?? $apiData['data']['account_name'] 
-                              ?? $apiData['player_name'] 
+
+                $playerName = $apiData['account_name']
+                              ?? $apiData['data']['account_name']
+                              ?? $apiData['player_name']
                               ?? null;
 
                 return response()->json([
                     'message' => 'Done',
                     'result' => [
                         'player_name' => $playerName,
-                        'username'    => $playerName, 
-                        'name'        => $playerName, 
-                        'raw_data'    => $apiData     
+                        'username' => $playerName,
+                        'name' => $playerName,
+                        'raw_data' => $apiData,
                     ]
                 ]);
             }
 
             $errorData = $response->json();
             return response()->json([
-                'message' => $errorData['message']['message'] ?? $errorData['error']['message'] ?? 'API Rejected', 
-                'error' => $errorData
+                'message' => $errorData['message']['message'] ?? $errorData['error']['message'] ?? 'API Rejected',
+                'error' => $errorData,
             ], 400);
 
         } catch (\Throwable $e) {
@@ -120,7 +147,7 @@ class TopupController extends Controller
     }
 
     /**
-     * បង្កើត Order ថ្មីក្នុងប្រព័ន្ធ និងទាញយក KHQR សម្រាប់ឱ្យអតិថិជនស្កែន
+     * áž”áž„áŸ’áž€áž¾áž Order ážáŸ’áž˜áž¸áž€áŸ’áž“áž»áž„áž”áŸ’ážšáž–áŸáž“áŸ’áž’ áž“áž·áž„áž‘áž¶áž‰áž™áž€ KHQR ážŸáž˜áŸ’ážšáž¶áž”áŸ‹áž±áŸ’áž™áž¢ážáž·ážáž·áž‡áž“ážŸáŸ’áž€áŸ‚áž“
      */
     public function createOrder(Request $request): JsonResponse
     {
@@ -166,7 +193,7 @@ class TopupController extends Controller
     }
 
     /**
-     * បង្ហាញព័ត៌មានលម្អិតនៃ Order នីមួយៗ
+     * áž”áž„áŸ’áž áž¶áž‰áž–áŸážáŸŒáž˜áž¶áž“áž›áž˜áŸ’áž¢áž·ážáž“áŸƒ Order áž“áž¸áž˜áž½áž™áŸ—
      */
     public function showOrder(TopupOrder $order): JsonResponse
     {
@@ -174,11 +201,11 @@ class TopupController extends Controller
     }
 
     /**
-     * 🎯 មុខងារទទួល Webhook រួម
+     * ðŸŽ¯ áž˜áž»ážáž„áž¶ážšáž‘áž‘áž½áž› Webhook ážšáž½áž˜
      */
     public function khqrWebhook(Request $request): JsonResponse
     {
-        Log::info('🎯 WEBHOOK HIT FROM BANK OR FLASH TOPUP:', $request->all());
+        Log::info('ðŸŽ¯ WEBHOOK HIT FROM BANK OR FLASH TOPUP:', $request->all());
 
         try {
             if ($request->has('event') || $request->has('reference_id') || $request->has('order_status')) {
@@ -255,26 +282,29 @@ class TopupController extends Controller
                     $order->load(['game', 'package']);
                     $serviceCode = $order->package->sku ?? $order->package->code; 
 
-                    $apiId     = env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC');
-                    $flashSecret = env('FLASH_TOPUP_SECRET_KEY');
-                    $timestamp = time(); 
-                    $nonce     = Str::random(16);
-                    $path      = '/api/reseller/v2/order';
-                    $method    = 'POST';
+                    $credentials = $this->flashTopupCredentials();
+                    $apiId = $credentials['api_id'];
+                    $flashSecret = $credentials['secret_key'];
+                    $timestamp = time();
+                    $nonce = Str::random(16);
+                    $path = '/api/reseller/v2/order';
+                    $method = 'POST';
 
-                    // 🎯 សម្រាប់លំហូរ Create Order ត្រូវតម្រៀបតាមការចង់បានរបស់ FlashTopUp ដែរ
+                    // ðŸŽ¯ ážŸáž˜áŸ’ážšáž¶áž”áŸ‹áž›áŸ†áž áž¼ážš Create Order ážáŸ’ážšáž¼ážœážáž˜áŸ’ážšáŸ€áž”ážáž¶áž˜áž€áž¶ážšáž…áž„áŸ‹áž”áž¶áž“ážšáž”ážŸáŸ‹ FlashTopUp ážŠáŸ‚ážš
                     $orderBody = [
                         'quantity'     => 1,
-                        'reference_id' => $order->order_no, 
-                        'server_id'    => $order->zone_id,
+                        'reference_id' => $order->order_no,
+                        'server_id'    => blank($order->zone_id) ? null : $order->zone_id,
                         'service_code' => $serviceCode,
                         'user_id'      => $order->player_id,
                     ];
 
-                    $orderJson = json_encode($orderBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    $orderBodyHash  = hash('sha256', $orderJson);
-                    $orderPayloadString = $method . $path . $timestamp . $nonce . $orderBodyHash;
-                    $orderSignature = hash_hmac('sha256', $orderPayloadString, $flashSecret);
+                    $orderJson = $this->canonicalFlashTopupBody($orderBody);
+                    if ($orderJson === false) {
+                        throw new \RuntimeException('Unable to encode FlashTopUp order body.');
+                    }
+
+                    $orderSignature = $this->flashTopupSignature($method, $path, $timestamp, $nonce, $orderJson, (string) $flashSecret);
 
                     $flashResponse = Http::withHeaders([
                         'Content-Type'    => 'application/json',
@@ -288,14 +318,14 @@ class TopupController extends Controller
                     ->post('https://api.flashtopup.com' . $path);
 
                     if ($flashResponse->successful()) {
-                        Log::info("🚀 Flash Topup Fulfillment Success Initiated: {$order->order_no}", $flashResponse->json());
+                        Log::info("ðŸš€ Flash Topup Fulfillment Success Initiated: {$order->order_no}", $flashResponse->json());
                     } else {
-                        Log::error("❌ Flash Topup Fulfillment API Refused: {$order->order_no}", $flashResponse->json());
+                        Log::error("âŒ Flash Topup Fulfillment API Refused: {$order->order_no}", $flashResponse->json());
                         $order->update(['status' => 'manual_hold']);
                     }
 
                 } catch (\Throwable $ex) {
-                    Log::critical("🚨 Error calling Flash Topup API: " . $ex->getMessage());
+                    Log::critical("ðŸš¨ Error calling Flash Topup API: " . $ex->getMessage());
                     $order->update(['status' => 'manual_hold']);
                 }
 
@@ -308,3 +338,4 @@ class TopupController extends Controller
         }
     }
 }
+

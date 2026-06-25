@@ -188,9 +188,9 @@ class TopupController extends Controller
     /**
      * 🎯 មុខងារទទួល Webhook រួម (KHQR Payment ➡️ ដំណើរការបាញ់ពេជ្រអូតូ)
      */
-    public function khqrWebhook(Request $request): JsonResponse
+   public function khqrWebhook(Request $request): JsonResponse
     {
-        Log::info('🎯 WEBHOOK HIT FROM BANK OR FLASH TOPUP:', $request->all());
+        Log::info('🎯 AUTOMATED WEBHOOK ACTIVATED:', $request->all());
 
         try {
             // ==========================================
@@ -211,19 +211,20 @@ class TopupController extends Controller
 
                 if (strtolower($orderStatus) === 'completed') {
                     $order->update(['status' => 'success', 'success_at' => now()]);
-                    Log::info("✅ Diamonds successfully added for Order: {$order->order_no}");
+                    Log::info("✅ [AUTO] Diamonds successfully added for Order: {$order->order_no}");
                     return response()->json(['success' => true, 'message' => 'Fulfillment Completed']);
                 }
 
                 if (in_array(strtolower($orderStatus), ['failed', 'refunded', 'canceled'])) {
                     $order->update(['status' => 'failed', 'failed_at' => now()]);
+                    Log::error("❌ [AUTO] FlashTopUp reported order failed: {$order->order_no}");
                     return response()->json(['success' => false, 'message' => 'Order failed']);
                 }
                 return response()->json(['message' => 'Status handled']);
             }
 
             // ==========================================
-            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> ចាប់ផ្តើមបាញ់ទៅ Flash
+            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> បាញ់ពេជ្រទៅ Flash អូតូភ្លាមៗ!
             // ==========================================
             if (!$request->has('transaction_id') || !$request->has('status')) {
                 return response()->json(['message' => 'Invalid Webhook'], 400);
@@ -236,23 +237,29 @@ class TopupController extends Controller
                 ->orWhere('order_no', $cleanWebhookKey)
                 ->first();
 
-            if (!$order) return response()->json(['message' => 'Order not found'], 404);
+            if (!$order) {
+                Log::error("🔍 [AUTO] Webhook received but Order Not Found for Transaction: {$cleanWebhookKey}");
+                return response()->json(['message' => 'Order not found'], 404);
+            }
 
+            // ឆែកលក្ខខណ្ឌថាតើភ្ញៀវបង់លុយជោគជ័យមែនអត់
             if (in_array(strtolower($request->input('status')), ['success', 'paid', 'completed'])) {
                 
+                // បើប្រព័ន្ធកំពុងដំណើរការ ឬបាញ់ចូលរួចរាល់ហើយ មិនបាច់បាញ់ទម្រួតទៀតទេ
                 if (in_array($order->status, ['processing', 'success'])) {
                     return response()->json(['success' => true, 'status' => 'success', 'message' => 'Already processed']);
                 }
 
+                // ផ្លាស់ប្តូរស្ថានភាពទៅជា 'processing' ភ្លាមៗដើម្បីការពារ Race Condition
                 $order->update(['status' => 'processing', 'paid_at' => now()]);
 
                 try {
                     $order->load(['game', 'package']);
                     
-                    // 👑 Force Mapping SKU ទៅជាកូដប្រព័ន្ធ Live ផ្លូវការរបស់ Flash
+                    // 👑 Force Mapping ទៅជាកូដផ្លូវការដែលត្រឹមត្រូវ ១០០%
                     $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null;
                     if ($serviceCode == '38' || empty($serviceCode)) {
-                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_55_DIAMONDS'; 
+                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38'; 
                     }
 
                     $productId = 3; // Mobile Legends ID គឺលេខ 3
@@ -279,6 +286,9 @@ class TopupController extends Controller
                     $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
                     $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
 
+                    // 🚀 ម៉ាស៊ីនចាប់ផ្តើមបាញ់ទៅ FlashTopUp ដោយស្វ័យប្រវត្ត (No Button Needed)
+                    Log::info("🚀 [AUTO] Pushing Order {$order->order_no} to FlashTopUp API directly...");
+                    
                     $flashResponse = Http::withHeaders([
                         'Content-Type'    => 'application/json',
                         'X-FT-API-ID'     => $apiId,
@@ -291,18 +301,19 @@ class TopupController extends Controller
                     ->post('https://api.flashtopup.com' . $path);
 
                     if ($flashResponse->successful()) {
-                        Log::info("🚀 Order Pushed to FlashTopUp Successfully: {$order->order_no}");
+                        Log::info("✅ [AUTO] Order Pushed to FlashTopUp Successfully: {$order->order_no}");
                     } else {
-                        Log::error("❌ Fulfillment API Refused by FlashTopUp: {$order->order_no}", $flashResponse->json());
+                        Log::error("❌ [AUTO] FlashTopUp Refused Order: {$order->order_no}", $flashResponse->json());
+                        // បើមានបញ្ហាបច្ចេកទេស វានឹងហៅទៅរក្សាទុកក្នុង manual_hold ឱ្យបងដឹងខ្លួន
                         $order->update(['status' => 'manual_hold']); 
                     }
 
                 } catch (\Throwable $ex) {
-                    Log::critical("🚨 Exception: " . $ex->getMessage());
+                    Log::critical("🚨 [AUTO] Exception During Fulfillment: " . $ex->getMessage());
                     $order->update(['status' => 'manual_hold']); 
                 }
 
-                return response()->json(['success' => true, 'status' => 'success', 'message' => 'Payment recorded']);
+                return response()->json(['success' => true, 'status' => 'success', 'message' => 'Payment recorded & order pushed']);
             }
             
             return response()->json(['message' => 'Non-success status'], 400);

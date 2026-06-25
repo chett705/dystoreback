@@ -194,8 +194,7 @@ class DashboardController extends Controller
 
     /**
      * ⚡ មុខងារចុចបង្ខំឱ្យជោគជ័យ និងបាញ់ពេជ្រទៅ FlashTopUp (Manual Verification)
-     */
-    public function manualVerifyOrder($id): JsonResponse
+     */public function manualVerifyOrder($id): JsonResponse
     {
         $order = TopupOrder::findOrFail($id);
 
@@ -207,33 +206,33 @@ class DashboardController extends Controller
 
         try {
             $order->load(['game', 'package']);
-
-            // 👑 Force Mapping SKU ទៅជាកូដប្រព័ន្ធ Live ផ្លូវការរបស់ Flash
-            $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null;
+            
+            // 👑 Force Mapping ទៅជាកូដផ្លូវការដែលខាង Support ផ្តល់ឱ្យ
+            $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null; 
             if ($serviceCode == '38' || empty($serviceCode)) {
-                $serviceCode = 'TOPUP_MOBILE_LEGENDS_55_DIAMONDS';
+                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
             }
 
             $productId = 3; // Mobile Legends ID: 3
 
             $apiId       = 'RSMNGJ90S66GU8IC';
             $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
-            $timestamp   = (string) time();
+            $timestamp   = (string) time(); 
             $nonce       = bin2hex(random_bytes(16));
-            $path        = '/api/reseller/v2/order';
+            $path        = '/api/reseller/v2/order'; 
 
             $orderBody = [
-                'product_id'   => (int)$productId,
+                'product_id'   => (int)$productId,    
                 'quantity'     => 1,
-                'reference_id' => (string)$order->order_no,
+                'reference_id' => (string)$order->order_no, 
                 'server_id'    => (string)trim($order->zone_id),
-                'service_code' => (string)trim($serviceCode),
+                'service_code' => (string)trim($serviceCode), 
                 'user_id'      => (string)trim($order->player_id),
             ];
-
+            
             ksort($orderBody);
             $orderJson = json_encode($orderBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
+            
             $orderBodyHash = hash('sha256', $orderJson);
             $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
             $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
@@ -245,9 +244,9 @@ class DashboardController extends Controller
                 'X-FT-Nonce'      => $nonce,
                 'X-FT-Signature'  => $orderSignature,
             ])
-                ->withoutVerifying()
-                ->withBody($orderJson, 'application/json')
-                ->post('https://api.flashtopup.com' . $path);
+            ->withoutVerifying() 
+            ->withBody($orderJson, 'application/json')
+            ->post('https://api.flashtopup.com' . $path);
 
             if ($flashResponse->successful()) {
                 Log::info("🚀 Manual Bypass Pushed to FlashTopUp successfully: {$order->order_no}");
@@ -258,7 +257,7 @@ class DashboardController extends Controller
             } else {
                 Log::error("❌ Manual Bypass Refused by FlashTopUp: {$order->order_no}", $flashResponse->json());
                 $order->update(['status' => 'manual_hold']);
-
+                
                 $errorString = $flashResponse->body() ?: 'Unknown Error';
                 $responseData = $flashResponse->json();
                 if ($responseData && isset($responseData['message'])) {
@@ -267,6 +266,7 @@ class DashboardController extends Controller
 
                 return response()->json(['message' => 'FlashTopUp Refused: ' . $errorString], 400);
             }
+
         } catch (\Throwable $ex) {
             Log::critical("🚨 Manual Bypass Exception: " . $ex->getMessage());
             $order->update(['status' => 'manual_hold']);

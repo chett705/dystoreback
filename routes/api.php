@@ -60,3 +60,5 @@ Route::prefix('admin')->group(function () {
         Route::delete('/orders/{id}', [DashboardController::class, 'destroyOrder']);
     });
 });
+
+

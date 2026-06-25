@@ -211,7 +211,7 @@ class TopupController extends Controller
 
                 if (strtolower($orderStatus) === 'completed') {
                     $order->update(['status' => 'success', 'success_at' => now()]);
-                    Log::info("✅ [AUTO] Diamonds successfully added for Order: {$order->order_no}");
+                    Log::info("✅ [AUTO] Diamonds/Pass successfully added for Order: {$order->order_no}");
                     return response()->json(['success' => true, 'message' => 'Fulfillment Completed']);
                 }
 
@@ -242,27 +242,33 @@ class TopupController extends Controller
                 return response()->json(['message' => 'Order not found'], 404);
             }
 
-            // ឆែកលក្ខខណ្ឌថាតើភ្ញៀវបង់លុយជោគជ័យមែនអត់
             if (in_array(strtolower($request->input('status')), ['success', 'paid', 'completed'])) {
                 
-                // បើប្រព័ន្ធកំពុងដំណើរការ ឬបាញ់ចូលរួចរាល់ហើយ មិនបាច់បាញ់ទម្រួតទៀតទេ
                 if (in_array($order->status, ['processing', 'success'])) {
                     return response()->json(['success' => true, 'status' => 'success', 'message' => 'Already processed']);
                 }
 
-                // ផ្លាស់ប្តូរស្ថានភាពទៅជា 'processing' ភ្លាមៗដើម្បីការពារ Race Condition
                 $order->update(['status' => 'processing', 'paid_at' => now()]);
 
                 try {
                     $order->load(['game', 'package']);
                     
-                    // 👑 Force Mapping ទៅជាកូដផ្លូវការដែលត្រឹមត្រូវ ១០០%
-                    $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null;
-                    if ($serviceCode == '38' || empty($serviceCode)) {
-                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38'; 
-                    }
+                    // 👑 ទាញយកកូដ SKU ពីផ្ទាំង Admin Management
+                    $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
+                    $skuValue = trim($skuValue);
 
-                    $productId = 3; // Mobile Legends ID គឺលេខ 3
+                    // 🛠️ ម៉ាស៊ីនបំប្លែងកូដសេវាកម្មស្វ័យប្រវត្តិ (Auto-Mapping Grid)
+                    if ($skuValue == '38' || empty($skuValue)) {
+                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
+                        $productId = 3;
+                    } elseif ($skuValue == '142') {
+                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_WEEKLY_PASS_142'; // 🔥 កូដសម្រាប់ Weekly Pass
+                        $productId = 3;
+                    } else {
+                        // ករណីកញ្ចប់ផ្សេងៗទៀតនាពេលអនាគតដែលបងបំពេញ SKU ពេញលេញស្រាប់
+                        $serviceCode = $skuValue;
+                        $productId = 3;
+                    }
 
                     $apiId       = 'RSMNGJ90S66GU8IC';
                     $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
@@ -286,8 +292,7 @@ class TopupController extends Controller
                     $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
                     $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
 
-                    // 🚀 ម៉ាស៊ីនចាប់ផ្តើមបាញ់ទៅ FlashTopUp ដោយស្វ័យប្រវត្ត (No Button Needed)
-                    Log::info("🚀 [AUTO] Pushing Order {$order->order_no} to FlashTopUp API directly...");
+                    Log::info("🚀 [AUTO] Pushing Order {$order->order_no} ({$serviceCode}) to FlashTopUp API...");
                     
                     $flashResponse = Http::withHeaders([
                         'Content-Type'    => 'application/json',
@@ -304,7 +309,6 @@ class TopupController extends Controller
                         Log::info("✅ [AUTO] Order Pushed to FlashTopUp Successfully: {$order->order_no}");
                     } else {
                         Log::error("❌ [AUTO] FlashTopUp Refused Order: {$order->order_no}", $flashResponse->json());
-                        // បើមានបញ្ហាបច្ចេកទេស វានឹងហៅទៅរក្សាទុកក្នុង manual_hold ឱ្យបងដឹងខ្លួន
                         $order->update(['status' => 'manual_hold']); 
                     }
 

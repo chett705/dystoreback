@@ -192,9 +192,7 @@ class DashboardController extends Controller
         ]);
     }
 
-    /**
-     * ⚡ មុខងារចុចបង្ខំឱ្យជោគជ័យ និងបាញ់ពេជ្រទៅ FlashTopUp (Manual Verification)
-     */public function manualVerifyOrder($id): JsonResponse
+   public function manualVerifyOrder($id): JsonResponse
     {
         $order = TopupOrder::findOrFail($id);
 
@@ -207,13 +205,21 @@ class DashboardController extends Controller
         try {
             $order->load(['game', 'package']);
             
-            // 👑 Force Mapping ទៅជាកូដផ្លូវការដែលខាង Support ផ្តល់ឱ្យ
-            $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null; 
-            if ($serviceCode == '38' || empty($serviceCode)) {
-                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
-            }
+            // 👑 ទាញយកកូដ SKU ពីផ្ទាំង Admin Management
+            $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
+            $skuValue = trim($skuValue);
 
-            $productId = 3; // Mobile Legends ID: 3
+            // 🛠️ ម៉ាស៊ីនបំប្លែងកូដសេវាកម្មស្វ័យប្រវត្តិ (Auto-Mapping Grid)
+            if ($skuValue == '38' || empty($skuValue)) {
+                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
+                $productId = 3;
+            } elseif ($skuValue == '142') {
+                $serviceCode = 'TOPUP_MOBILE_LEGENDS_WEEKLY_PASS_142'; // 🔥 កូដសម្រាប់ Weekly Pass
+                $productId = 3;
+            } else {
+                $serviceCode = $skuValue;
+                $productId = 3;
+            }
 
             $apiId       = 'RSMNGJ90S66GU8IC';
             $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';

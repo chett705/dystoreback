@@ -188,20 +188,20 @@ class TopupController extends Controller
     /**
      * 🎯 មុខងារទទួល Webhook រួម (KHQR Payment ➡️ ដំណើរការបាញ់ពេជ្រអូតូ)
      */
-   public function khqrWebhook(Request $request): JsonResponse
+    public function khqrWebhook(Request $request): JsonResponse
     {
         Log::info('🎯 AUTOMATED WEBHOOK ACTIVATED:', $request->all());
 
         try {
             // ==========================================
-            // 🔔 ផ្នែកទី ១៖ Callback ពី FlashTopUp ពេលពេជ្រចូលហ្គេមរួចរាល់
+            // 🔔 ផ្នែកទី ១៖ Callback ពី FlashTopUp ពេលបញ្ចូលរួចរាល់
             // ==========================================
             if ($request->has('event') || $request->has('reference_id') || $request->has('order_status')) {
                 $referenceId = $request->input('reference_id');
                 $orderStatus = $request->input('order_status');
 
                 $order = TopupOrder::where('order_no', $referenceId)->first();
-                
+
                 if (!$order) {
                     if (str_contains(strtolower($referenceId), 'test') || $referenceId === 'REF-TEST-001') {
                         return response()->json(['success' => true, 'message' => 'Test Webhook Received'], 200);
@@ -211,20 +211,19 @@ class TopupController extends Controller
 
                 if (strtolower($orderStatus) === 'completed') {
                     $order->update(['status' => 'success', 'success_at' => now()]);
-                    Log::info("✅ [AUTO] Diamonds/Pass successfully added for Order: {$order->order_no}");
+                    Log::info("✅ [AUTO] Fulfillment Completed for Order: {$order->order_no}");
                     return response()->json(['success' => true, 'message' => 'Fulfillment Completed']);
                 }
 
                 if (in_array(strtolower($orderStatus), ['failed', 'refunded', 'canceled'])) {
                     $order->update(['status' => 'failed', 'failed_at' => now()]);
-                    Log::error("❌ [AUTO] FlashTopUp reported order failed: {$order->order_no}");
                     return response()->json(['success' => false, 'message' => 'Order failed']);
                 }
                 return response()->json(['message' => 'Status handled']);
             }
 
             // ==========================================
-            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> បាញ់ពេជ្រទៅ Flash អូតូភ្លាមៗ!
+            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> បាញ់អូតូភ្លាមៗ
             // ==========================================
             if (!$request->has('transaction_id') || !$request->has('status')) {
                 return response()->json(['message' => 'Invalid Webhook'], 400);
@@ -237,13 +236,10 @@ class TopupController extends Controller
                 ->orWhere('order_no', $cleanWebhookKey)
                 ->first();
 
-            if (!$order) {
-                Log::error("🔍 [AUTO] Webhook received but Order Not Found for Transaction: {$cleanWebhookKey}");
-                return response()->json(['message' => 'Order not found'], 404);
-            }
+            if (!$order) return response()->json(['message' => 'Order not found'], 404);
 
             if (in_array(strtolower($request->input('status')), ['success', 'paid', 'completed'])) {
-                
+
                 if (in_array($order->status, ['processing', 'success'])) {
                     return response()->json(['success' => true, 'status' => 'success', 'message' => 'Already processed']);
                 }
@@ -252,48 +248,85 @@ class TopupController extends Controller
 
                 try {
                     $order->load(['game', 'package']);
-                    
-                    // 👑 ទាញយកកូដ SKU ពីផ្ទាំង Admin Management
+
                     $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
                     $skuValue = trim($skuValue);
 
-                    // 🛠️ ម៉ាស៊ីនបំប្លែងកូដសេវាកម្មស្វ័យប្រវត្តិ (Auto-Mapping Grid)
+                    // ⚙️ Smart Auto-Mapping Engine (បង្កើតកូដវែងៗឱ្យអូតូតាមលេខ ID ខ្លីៗ)
                     if ($skuValue == '38' || empty($skuValue)) {
                         $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
                         $productId = 3;
                     } elseif ($skuValue == '142') {
-                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142'; // 🔥 កូដសម្រាប់ Weekly Pass
+                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142';
                         $productId = 3;
+                    }
+                    // 🔥 ម៉ាស៊ីនបង្កើតកូដអូតូសម្រាប់ប្រភេទ Mobile Legends Exclusive (IDs ចន្លោះ 267 ដល់ 350)
+                    elseif ((int)$skuValue >= 267 && (int)$skuValue <= 350) {
+                        $productId = 5; // Product ID របស់ប្រភេទ Exclusive គឺលេខ 5
+
+                        // ស្វែងរកចំនួន Diamonds ទៅតាម ID នីមួយៗដើម្បីបង្កើតកូដឱ្យត្រូវនឹងប្រព័ន្ធ Flash
+                        $diamondsMap = [
+                            '267' => '5_DIAMONDS',
+                            '268' => '11_DIAMONDS',
+                            '269' => '22_DIAMONDS',
+                            '270' => '33_DIAMONDS',
+                            '271' => '55_DIAMONDS',
+                            '272' => '56_DIAMONDS',
+                            '273' => '112_DIAMONDS'
+                        ];
+                        $diamondStr = $diamondsMap[$skuValue] ?? '55_DIAMONDS';
+                        $serviceCode = "TOPUP_MOBILE_LEGENDS_EXCLUSIVE_5_{$diamondStr}_{$skuValue}";
+                    }
+                    // 👾 ម៉ាស៊ីនបង្កើតកូដអូតូសម្រាប់ហ្គេម Magic Chess Gogo (IDs ចន្លោះ 2134 ដល់ 2150)
+                    elseif ((int)$skuValue >= 2134 && (int)$skuValue <= 2150) {
+                        $productId = 107; // Product ID របស់ Magic Chess Gogo គឺលេខ 107
+
+                        $mcMap = [
+                            '2134' => '5_DIAMONDS',
+                            '2135' => '11_DIAMONDS',
+                            '2136' => '22_DIAMONDS',
+                            '2137' => '55_DIAMONDS',
+                            '2138' => '56_DIAMONDS',
+                            '2139' => '86_DIAMONDS',
+                            '2140' => '112_DIAMONDS'
+                        ];
+                        $mcStr = $mcMap[$skuValue] ?? '55_DIAMONDS';
+                        $serviceCode = "TOPUP_MAGIC_CHESS_GOGO_107_{$mcStr}_{$skuValue}";
+                    }
+                    // ករណីបងដាក់សញ្ញាខណ្ឌ | ដោយខ្លួនឯង
+                    elseif (str_contains($skuValue, '|')) {
+                        $parts = explode('|', $skuValue);
+                        $productId = (int)trim($parts[0]);
+                        $serviceCode = trim($parts[1]);
                     } else {
-                        // ករណីកញ្ចប់ផ្សេងៗទៀតនាពេលអនាគតដែលបងបំពេញ SKU ពេញលេញស្រាប់
                         $serviceCode = $skuValue;
                         $productId = 3;
                     }
 
                     $apiId       = 'RSMNGJ90S66GU8IC';
                     $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
-                    $timestamp   = (string) time(); 
+                    $timestamp   = (string) time();
                     $nonce       = bin2hex(random_bytes(16));
-                    $path        = '/api/reseller/v2/order'; 
+                    $path        = '/api/reseller/v2/order';
 
                     $orderBody = [
-                        'product_id'   => (int)$productId,    
+                        'product_id'   => (int)$productId,
                         'quantity'     => 1,
-                        'reference_id' => (string)$order->order_no, 
+                        'reference_id' => (string)$order->order_no,
                         'server_id'    => (string)trim($order->zone_id),
-                        'service_code' => (string)trim($serviceCode), 
+                        'service_code' => (string)trim($serviceCode),
                         'user_id'      => (string)trim($order->player_id),
                     ];
-                    
+
                     ksort($orderBody);
                     $orderJson = json_encode($orderBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    
+
                     $orderBodyHash = hash('sha256', $orderJson);
                     $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
                     $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
 
-                    Log::info("🚀 [AUTO] Pushing Order {$order->order_no} ({$serviceCode}) to FlashTopUp API...");
-                    
+                    Log::info("🚀 [AUTO PUSH] Product ID: {$productId} | Service Code: {$serviceCode}");
+
                     $flashResponse = Http::withHeaders([
                         'Content-Type'    => 'application/json',
                         'X-FT-API-ID'     => $apiId,
@@ -301,25 +334,24 @@ class TopupController extends Controller
                         'X-FT-Nonce'      => $nonce,
                         'X-FT-Signature'  => $orderSignature,
                     ])
-                    ->withoutVerifying() 
-                    ->withBody($orderJson, 'application/json')
-                    ->post('https://api.flashtopup.com' . $path);
+                        ->withoutVerifying()
+                        ->withBody($orderJson, 'application/json')
+                        ->post('https://api.flashtopup.com' . $path);
 
                     if ($flashResponse->successful()) {
-                        Log::info("✅ [AUTO] Order Pushed to FlashTopUp Successfully: {$order->order_no}");
+                        Log::info("✅ [AUTO SUCCESS] Pushed Successfully: {$order->order_no}");
                     } else {
-                        Log::error("❌ [AUTO] FlashTopUp Refused Order: {$order->order_no}", $flashResponse->json());
-                        $order->update(['status' => 'manual_hold']); 
+                        Log::error("❌ [AUTO REFUSED] FlashTopUp Refused: {$order->order_no}", $flashResponse->json());
+                        $order->update(['status' => 'manual_hold']);
                     }
-
                 } catch (\Throwable $ex) {
-                    Log::critical("🚨 [AUTO] Exception During Fulfillment: " . $ex->getMessage());
-                    $order->update(['status' => 'manual_hold']); 
+                    Log::critical("🚨 [AUTO EXCEPTION] Error: " . $ex->getMessage());
+                    $order->update(['status' => 'manual_hold']);
                 }
 
-                return response()->json(['success' => true, 'status' => 'success', 'message' => 'Payment recorded & order pushed']);
+                return response()->json(['success' => true, 'status' => 'success', 'message' => 'Processed']);
             }
-            
+
             return response()->json(['message' => 'Non-success status'], 400);
         } catch (\Throwable $e) {
             Log::error("🚨 Critical Webhook Error: " . $e->getMessage());

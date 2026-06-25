@@ -192,7 +192,7 @@ class DashboardController extends Controller
         ]);
     }
 
-   public function manualVerifyOrder($id): JsonResponse
+    public function manualVerifyOrder($id): JsonResponse
     {
         $order = TopupOrder::findOrFail($id);
 
@@ -204,18 +204,47 @@ class DashboardController extends Controller
 
         try {
             $order->load(['game', 'package']);
-            
-            // 👑 ទាញយកកូដ SKU ពីផ្ទាំង Admin Management
+
             $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
             $skuValue = trim($skuValue);
 
-            // 🛠️ ម៉ាស៊ីនបំប្លែងកូដសេវាកម្មស្វ័យប្រវត្តិ (Auto-Mapping Grid)
+            // ⚙️ Smart Auto-Mapping Engine សម្រាប់ផ្ទាំង Manual ចុចដៃ
             if ($skuValue == '38' || empty($skuValue)) {
                 $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
                 $productId = 3;
             } elseif ($skuValue == '142') {
-                $serviceCode = 'TOPUP_MOBILE_LEGENDS_WEEKLY_PASS_142'; // 🔥 កូដសម្រាប់ Weekly Pass
+                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142';
                 $productId = 3;
+            } elseif ((int)$skuValue >= 267 && (int)$skuValue <= 350) {
+                $productId = 5;
+                $diamondsMap = [
+                    '267' => '5_DIAMONDS',
+                    '268' => '11_DIAMONDS',
+                    '269' => '22_DIAMONDS',
+                    '270' => '33_DIAMONDS',
+                    '271' => '55_DIAMONDS',
+                    '272' => '56_DIAMONDS',
+                    '273' => '112_DIAMONDS'
+                ];
+                $diamondStr = $diamondsMap[$skuValue] ?? '55_DIAMONDS';
+                $serviceCode = "TOPUP_MOBILE_LEGENDS_EXCLUSIVE_5_{$diamondStr}_{$skuValue}";
+            } elseif ((int)$skuValue >= 2134 && (int)$skuValue <= 2150) {
+                $productId = 107;
+                $mcMap = [
+                    '2134' => '5_DIAMONDS',
+                    '2135' => '11_DIAMONDS',
+                    '2136' => '22_DIAMONDS',
+                    '2137' => '55_DIAMONDS',
+                    '2138' => '56_DIAMONDS',
+                    '2139' => '86_DIAMONDS',
+                    '2140' => '112_DIAMONDS'
+                ];
+                $mcStr = $mcMap[$skuValue] ?? '55_DIAMONDS';
+                $serviceCode = "TOPUP_MAGIC_CHESS_GOGO_107_{$mcStr}_{$skuValue}";
+            } elseif (str_contains($skuValue, '|')) {
+                $parts = explode('|', $skuValue);
+                $productId = (int)trim($parts[0]);
+                $serviceCode = trim($parts[1]);
             } else {
                 $serviceCode = $skuValue;
                 $productId = 3;
@@ -223,22 +252,22 @@ class DashboardController extends Controller
 
             $apiId       = 'RSMNGJ90S66GU8IC';
             $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
-            $timestamp   = (string) time(); 
+            $timestamp   = (string) time();
             $nonce       = bin2hex(random_bytes(16));
-            $path        = '/api/reseller/v2/order'; 
+            $path        = '/api/reseller/v2/order';
 
             $orderBody = [
-                'product_id'   => (int)$productId,    
+                'product_id'   => (int)$productId,
                 'quantity'     => 1,
-                'reference_id' => (string)$order->order_no, 
+                'reference_id' => (string)$order->order_no,
                 'server_id'    => (string)trim($order->zone_id),
-                'service_code' => (string)trim($serviceCode), 
+                'service_code' => (string)trim($serviceCode),
                 'user_id'      => (string)trim($order->player_id),
             ];
-            
+
             ksort($orderBody);
             $orderJson = json_encode($orderBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            
+
             $orderBodyHash = hash('sha256', $orderJson);
             $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
             $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
@@ -250,31 +279,20 @@ class DashboardController extends Controller
                 'X-FT-Nonce'      => $nonce,
                 'X-FT-Signature'  => $orderSignature,
             ])
-            ->withoutVerifying() 
-            ->withBody($orderJson, 'application/json')
-            ->post('https://api.flashtopup.com' . $path);
+                ->withoutVerifying()
+                ->withBody($orderJson, 'application/json')
+                ->post('https://api.flashtopup.com' . $path);
 
             if ($flashResponse->successful()) {
-                Log::info("🚀 Manual Bypass Pushed to FlashTopUp successfully: {$order->order_no}");
                 return response()->json([
-                    'message' => 'Manual order verification pushed to FlashTopUp successfully.',
+                    'message' => 'Manual verification success.',
                     'order'   => $order->fresh(['game', 'package'])
                 ], 200);
             } else {
-                Log::error("❌ Manual Bypass Refused by FlashTopUp: {$order->order_no}", $flashResponse->json());
                 $order->update(['status' => 'manual_hold']);
-                
-                $errorString = $flashResponse->body() ?: 'Unknown Error';
-                $responseData = $flashResponse->json();
-                if ($responseData && isset($responseData['message'])) {
-                    $errorString = $responseData['message'];
-                }
-
-                return response()->json(['message' => 'FlashTopUp Refused: ' . $errorString], 400);
+                return response()->json(['message' => 'FlashTopUp Refused: ' . $flashResponse->body()], 400);
             }
-
         } catch (\Throwable $ex) {
-            Log::critical("🚨 Manual Bypass Exception: " . $ex->getMessage());
             $order->update(['status' => 'manual_hold']);
             return response()->json(['message' => 'Internal server error: ' . $ex->getMessage()], 500);
         }

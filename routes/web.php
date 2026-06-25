@@ -27,3 +27,25 @@ Route::get('/update-game-ids', function () {
         return "⚠️ Error: " . $e->getMessage();
     }
 });
+
+use Illuminate\Support\Facades\Http;
+
+Route::get('/api/test-flash-products', function () {
+    $apiId       = 'RSMNGJ90S66GU8IC';
+    $flashSecret = trim(env('FLASH_TOPUP_SECRET_KEY'));
+    $timestamp   = (string) time(); 
+    $nonce       = bin2hex(random_bytes(16));
+    $path        = '/api/reseller/v2/services'; // លីងសម្រាប់ទាញយកផលិតផលទាំងអស់
+
+    $canonical = implode("\n", ['GET', $path, $timestamp, $nonce, hash('sha256', '')]);
+    $signature = hash_hmac('sha256', $canonical, $flashSecret);
+
+    $response = Http::withHeaders([
+        'X-FT-API-ID'    => $apiId,
+        'X-FT-Timestamp' => $timestamp,
+        'X-FT-Nonce'     => $nonce,
+        'X-FT-Signature' => $signature,
+    ])->withoutVerifying()->get('https://api.flashtopup.com' . $path);
+
+    return response()->json($response->json());
+});

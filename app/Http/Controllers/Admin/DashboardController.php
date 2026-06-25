@@ -86,6 +86,9 @@ class DashboardController extends Controller
         return response()->json(['message' => 'Game updated successfully.', 'data' => $game]);
     }
 
+    /**
+     * 🎯 កែសម្រួល៖ គាំទ្រការរក្សាទុក SKU ពេលបង្កើតកញ្ចប់ថ្មីពីផ្ទាំង Admin
+     */
     public function storePackage(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -93,6 +96,7 @@ class DashboardController extends Controller
             'name'           => ['nullable', 'string', 'max:255'], 
             'price'          => ['required', 'numeric', 'min:0'],
             'diamond_amount' => ['required', 'integer', 'min:1'], 
+            'sku'            => ['nullable', 'string', 'max:191'], // 🎯 បន្ថែមការអនុញ្ញាតឱ្យបញ្ជូន SKU មកពី Admin
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
@@ -105,6 +109,7 @@ class DashboardController extends Controller
             'name'           => $packageName,
             'price'          => $validated['price'],
             'diamond_amount' => $validated['diamond_amount'], 
+            'sku'            => $validated['sku'] ? trim($validated['sku']) : null, // 🎯 រក្សាទុកទិន្នន័យ SKU
             'sort_order'     => $validated['sort_order'] ?? 0,
             'is_active'      => $request->boolean('is_active', true),
         ]);
@@ -112,12 +117,16 @@ class DashboardController extends Controller
         return response()->json(['message' => 'Package created successfully.', 'package' => $package->fresh(['game'])], 201);
     }
 
+    /**
+     * 🎯 កែសម្រួល៖ គាំទ្រការកែប្រែ (Update) លេខ SKU នៃកញ្ចប់ចាស់ៗពីផ្ទាំង Admin
+     */
     public function updatePackage(Request $request, TopupPackage $package): JsonResponse
     {
         $validated = $request->validate([
             'name'           => ['nullable', 'string', 'max:255'],
             'price'          => ['required', 'numeric', 'min:0'],
             'diamond_amount' => ['required', 'integer', 'min:1'], 
+            'sku'            => ['nullable', 'string', 'max:191'], // 🎯 បន្ថែមការអនុញ្ញាតឱ្យកែប្រែ SKU
             'sort_order'     => ['nullable', 'integer', 'min:0'],
             'is_active'      => ['nullable', 'boolean'],
         ]);
@@ -128,6 +137,7 @@ class DashboardController extends Controller
             'name'           => $packageName,
             'price'          => $validated['price'],
             'diamond_amount' => $validated['diamond_amount'], 
+            'sku'            => $validated['sku'] ? trim($validated['sku']) : null, // 🎯 Update ទិន្នន័យ SKU ទៅ Aiven
             'sort_order'     => $validated['sort_order'] ?? $package->sort_order,
             'is_active'      => $request->boolean('is_active'),
         ]);
@@ -177,10 +187,10 @@ class DashboardController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Order deleted successfully.'], 200);
     }
+
     public function destroyGame($id): JsonResponse
     {
         try {
-            // 🚀 ១. ស្វែងរកទិន្នន័យហ្គេមតាមរយៈ ID ដែលបោះមកពី React
             $game = TopupGame::query()->find($id);
 
             if (!$game) {
@@ -190,7 +200,6 @@ class DashboardController extends Controller
                 ], 404);
             }
 
-            // 🚀 ២. ធ្វើការលុបដាច់ចេញពី Database ជារៀងរហូត
             $game->delete();
 
             return response()->json([

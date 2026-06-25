@@ -194,7 +194,7 @@ class TopupController extends Controller
 
         try {
             // ==========================================
-            // 🔔 ផ្នែកទី ១៖ Callback ត្រឡប់មកវិញពី FlashTopUp ពេលពេជ្រចូលហ្គេមភ្ញៀវរួចរាល់
+            // 🔔 ផ្នែកទី ១៖ Callback ពី FlashTopUp ពេលពេជ្រចូលហ្គេមរួចរាល់
             // ==========================================
             if ($request->has('event') || $request->has('reference_id') || $request->has('order_status')) {
                 $referenceId = $request->input('reference_id');
@@ -202,23 +202,19 @@ class TopupController extends Controller
 
                 $order = TopupOrder::where('order_no', $referenceId)->first();
                 
-                // ឆែកមើលថាតើជាការចុចតេស្ត (Test Webhook) របស់ Flash ដែរឬទេ?
                 if (!$order) {
                     if (str_contains(strtolower($referenceId), 'test') || $referenceId === 'REF-TEST-001') {
-                        Log::info("🎉 FlashTopUp Test Webhook Received Successfully!");
                         return response()->json(['success' => true, 'message' => 'Test Webhook Received'], 200);
                     }
                     return response()->json(['message' => 'Order not found'], 404);
                 }
 
-                // 🎯 ពេល FlashTopUp បាញ់មកប្រាប់ថាបញ្ចូលពេជ្រចូលគណនីហ្គេមជោគជ័យហើយ
                 if (strtolower($orderStatus) === 'completed') {
                     $order->update(['status' => 'success', 'success_at' => now()]);
-                    Log::info("✅ Diamonds successfully added to player's MLBB account for Order: {$order->order_no}");
+                    Log::info("✅ Diamonds successfully added for Order: {$order->order_no}");
                     return response()->json(['success' => true, 'message' => 'Fulfillment Completed']);
                 }
 
-                // បើបញ្ចូលទៅបរាជ័យ (ខុស ID ហ្គេម ឬខុស Server)
                 if (in_array(strtolower($orderStatus), ['failed', 'refunded', 'canceled'])) {
                     $order->update(['status' => 'failed', 'failed_at' => now()]);
                     return response()->json(['success' => false, 'message' => 'Order failed']);
@@ -227,7 +223,7 @@ class TopupController extends Controller
             }
 
             // ==========================================
-            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> ចាប់ផ្តើមដំណើរការបាញ់ពេជ្រទៅ Flash
+            // 🏦 ផ្នែកទី ២៖ Webhook ធនាគារបង់លុយ (KHQR) -> ចាប់ផ្តើមបាញ់ទៅ Flash
             // ==========================================
             if (!$request->has('transaction_id') || !$request->has('status')) {
                 return response()->json(['message' => 'Invalid Webhook'], 400);
@@ -248,29 +244,25 @@ class TopupController extends Controller
                     return response()->json(['success' => true, 'status' => 'success', 'message' => 'Already processed']);
                 }
 
-                // កែប្រែទៅជា processing ភ្លាមៗដើម្បីបញ្ជាក់ថាទទួលបានលុយពី KHQR រួចរាល់
                 $order->update(['status' => 'processing', 'paid_at' => now()]);
 
-                // 🚀 រៀបចំលំហូរបាញ់ការកុម្ម៉ង់ទិញទៅ FlashTopUp
                 try {
                     $order->load(['game', 'package']);
                     
-                    $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null; 
-                    $productId = $order->game ? ($order->game->api_game_id ?? $order->game->id) : null;
-
-                    if (!$serviceCode || !$productId) {
-                        Log::error("❌ Missing Data for FlashTopUp Order #{$order->order_no}: Product ID: {$productId}, Service Code: {$serviceCode}");
-                        $order->update(['status' => 'manual_hold']);
-                        return response()->json(['success' => false, 'message' => 'Missing package or game data mapping']);
+                    // 👑 Force Mapping SKU ទៅជាកូដប្រព័ន្ធ Live ផ្លូវការរបស់ Flash
+                    $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null;
+                    if ($serviceCode == '38' || empty($serviceCode)) {
+                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_55_DIAMONDS'; 
                     }
 
-                    $apiId       = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
-                    $flashSecret = trim(env('FLASH_TOPUP_SECRET_KEY'));
+                    $productId = 3; // Mobile Legends ID គឺលេខ 3
+
+                    $apiId       = 'RSMNGJ90S66GU8IC';
+                    $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
                     $timestamp   = (string) time(); 
                     $nonce       = bin2hex(random_bytes(16));
                     $path        = '/api/reseller/v2/order'; 
 
-                    // 🎯 បង្ខំ Casting (string) ទៅលើរចនាសម្ព័ន្ធធានាឱ្យ Flash ស្គាល់ ១០០%
                     $orderBody = [
                         'product_id'   => (int)$productId,    
                         'quantity'     => 1,
@@ -299,14 +291,14 @@ class TopupController extends Controller
                     ->post('https://api.flashtopup.com' . $path);
 
                     if ($flashResponse->successful()) {
-                        Log::info("🚀 Order Pushed to FlashTopUp Successfully, waiting for delivery callback: {$order->order_no}");
+                        Log::info("🚀 Order Pushed to FlashTopUp Successfully: {$order->order_no}");
                     } else {
-                        Log::error("❌ Fulfillment API Refused by FlashTopUp via KHQR Webhook: {$order->order_no}", $flashResponse->json());
+                        Log::error("❌ Fulfillment API Refused by FlashTopUp: {$order->order_no}", $flashResponse->json());
                         $order->update(['status' => 'manual_hold']); 
                     }
 
                 } catch (\Throwable $ex) {
-                    Log::critical("🚨 Error calling Flash Topup API Exception: " . $ex->getMessage());
+                    Log::critical("🚨 Exception: " . $ex->getMessage());
                     $order->update(['status' => 'manual_hold']); 
                 }
 

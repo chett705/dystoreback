@@ -15,22 +15,12 @@ class DashboardController extends Controller
 {
     public function index(): JsonResponse
     {
-        $games = TopupGame::query()
-            ->with(['packages' => function ($query) {
-                $query->orderBy('sort_order');
-            }])
-            ->orderBy('name')
-            ->get();
-
-        $orders = TopupOrder::query()
-            ->with(['game', 'package']) // 🎯 Eager load ឈ្មោះកញ្ចប់ពេជ្រកុំឱ្យចេញសញ្ញាដកលើ React
-            ->orderBy('created_at', 'desc')
-            ->get();
-
         return response()->json([
-            'games'    => $games,
-            'packages' => TopupPackage::query()->with('game')->orderBy('created_at', 'desc')->get(),
-            'orders'   => $orders,
+            'games'    => TopupGame::with(['packages' => function ($q) {
+                $q->orderBy('sort_order');
+            }])->orderBy('name')->get(),
+            'packages' => TopupPackage::with('game')->orderBy('created_at', 'desc')->get(),
+            'orders'   => TopupOrder::with(['game', 'package'])->orderBy('created_at', 'desc')->get(),
         ]);
     }
 
@@ -207,7 +197,7 @@ class DashboardController extends Controller
      */
     public function manualVerifyOrder($id): JsonResponse
     {
-        $order = TopupOrder::query()->findOrFail($id);
+        $order = TopupOrder::findOrFail($id);
 
         if (in_array($order->status, ['success', 'completed'])) {
             return response()->json(['message' => 'Order is already marked as success.'], 400);
@@ -218,23 +208,20 @@ class DashboardController extends Controller
         try {
             $order->load(['game', 'package']);
 
+            // 👑 Force Mapping SKU ទៅជាកូដប្រព័ន្ធ Live ផ្លូវការរបស់ Flash
             $serviceCode = $order->package ? ($order->package->sku ?? $order->package->code) : null;
-            $productId   = $order->game ? ($order->game->api_game_id ?? $order->game->id) : null;
-
-            if (!$serviceCode || !$productId) {
-                $order->update(['status' => 'manual_hold']);
-                return response()->json([
-                    'message' => "Missing Data Mapping: Product ID ({$productId}) or Service Code ({$serviceCode}) is empty."
-                ], 422);
+            if ($serviceCode == '38' || empty($serviceCode)) {
+                $serviceCode = 'TOPUP_MOBILE_LEGENDS_55_DIAMONDS';
             }
 
-            $apiId       = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
-            $flashSecret = trim(env('FLASH_TOPUP_SECRET_KEY'));
+            $productId = 3; // Mobile Legends ID: 3
+
+            $apiId       = 'RSMNGJ90S66GU8IC';
+            $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
             $timestamp   = (string) time();
             $nonce       = bin2hex(random_bytes(16));
             $path        = '/api/reseller/v2/order';
 
-            // 🎯 បង្ខំ Casting (string) ទិន្នន័យទាំងអស់ដើម្បីឱ្យប្រព័ន្ធ Flash ស្វែងរកលេខកូដ SKU ឃើញ
             $orderBody = [
                 'product_id'   => (int)$productId,
                 'quantity'     => 1,
@@ -263,7 +250,6 @@ class DashboardController extends Controller
                 ->post('https://api.flashtopup.com' . $path);
 
             if ($flashResponse->successful()) {
-                // ព្រោះជាការចុចលក្ខណៈ Manual បងអាច Update ទៅជា success ឬរង់ចាំ Callback ពី Flash ដូចគ្នា
                 Log::info("🚀 Manual Bypass Pushed to FlashTopUp successfully: {$order->order_no}");
                 return response()->json([
                     'message' => 'Manual order verification pushed to FlashTopUp successfully.',

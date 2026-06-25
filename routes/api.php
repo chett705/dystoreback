@@ -46,7 +46,7 @@ Route::get('/clear-route', function () {
 });
 
 // ថែមខ្សែការពារសម្រាប់ហៅពីក្រៅ /api/clear-route
-Route::get('/api/clear-route', function () {
+Route::get('/clear-route', function () {
     Artisan::call('route:clear');
     Artisan::call('config:clear');
     Artisan::call('cache:clear');

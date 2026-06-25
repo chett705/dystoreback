@@ -15,6 +15,7 @@ class TopupPackage extends Model
         'name',
         'diamond_amount',
         'price',
+        'sku',          // 🎯 ដំណោះស្រាយគន្លឹះ៖ បើកសិទ្ធិ Mass Assignment ឱ្យ Column sku របស់ Flash
         'sort_order',
         'is_active',
     ];

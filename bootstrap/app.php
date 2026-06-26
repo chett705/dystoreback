@@ -13,22 +13,16 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        
         // 🔐 រក្សាទុក Alias សម្រាប់ផ្ទាំង Admin ដដែល
         $middleware->alias([
             'admin.token' => \App\Http\Middleware\EnsureAdminApiToken::class,
         ]);
 
-        // 🎯 លើកលែងច្បាប់ CSRF សម្រាប់រាល់ API និង Webhook ទាំងអស់
+        // 🎯 ដំណោះស្រាយ៖ លើកលែងច្បាប់ CSRF ផ្លូវលីង Webhook របស់ធនាគារ (បិទការឆែក Token ត្រង់ផ្លូវនេះ)
         $middleware->validateCsrfTokens(except: [
-            'api/*',
-            'api/khqr-webhook',
             'api/khqr/webhook',
             'api/flashtopup/webhook',
         ]);
-
-        // 🌐 បើកច្បាប់ CORS របៀបផ្លូវការរបស់ Laravel 11 ទៅកាន់ API ទាញទិន្នន័យ (មានសុវត្ថិភាពខ្ពស់ មិននាំឱ្យគាំង 502)
-        $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

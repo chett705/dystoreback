@@ -14,12 +14,12 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         
-        // 🔐 រក្សាទុក Alias សម្រាប់ផ្ទាំង Admin ដដែល (កូដដើមរបស់បង)
+        // 🔐 រក្សាទុក Alias សម្រាប់ផ្ទាំង Admin ដដែល
         $middleware->alias([
             'admin.token' => \App\Http\Middleware\EnsureAdminApiToken::class,
         ]);
 
-        // 🎯 ដំណោះស្រាយ៖ លើកលែងច្បាប់ CSRF សម្រាប់រាល់ API និង Webhook ទាំងអស់ (រួមទាំងចាស់ និងថ្មី)
+        // 🎯 លើកលែងច្បាប់ CSRF សម្រាប់រាល់ API និង Webhook ទាំងអស់
         $middleware->validateCsrfTokens(except: [
             'api/*',
             'api/khqr-webhook',
@@ -27,8 +27,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/flashtopup/webhook',
         ]);
 
-        // 🌐 ចុះឈ្មោះហៅប្រើប្រាស់ CorsMiddleware ដែលយើងទើបបង្កើតអម្បាញ់មិញ (បំបាត់ CORS Error)
-        $middleware->append(\App\Http\Middleware\CorsMiddleware::class);
+        // 🌐 វិធីបើក CORS Header របៀបផ្លូវការរបស់ Laravel 11 (មិននាំឱ្យគាំង 502)
+        $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

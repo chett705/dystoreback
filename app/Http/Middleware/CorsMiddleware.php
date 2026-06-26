@@ -13,12 +13,13 @@ class CorsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // 🎯 ដំណោះស្រាយពិសេស៖ បើសិនជាមាន Preflight OPTIONS Request ហៅមកពី Frontend
+        // 🎯 ដំណោះស្រាយត្រឹមត្រូវ៖ បើកចំហរទ្វារសម្រាប់ OPTIONS Preflight Request (បាត់រលកក្រហម និងបាត់គាំង 502)
         if ($request->isMethod('OPTIONS')) {
-            return response('', 200)
-                ->header('Access-Control-Allow-Origin', '*')
-                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-                ->header('Access-Control-Allow-Headers', 'Origin, Content-Type, Accept, Authorization, X-Requested-With, X-FT-API-ID, X-FT-Timestamp, X-FT-Nonce, X-FT-Signature');
+            $response = new Response('', 200);
+            $response->headers->set('Access-Control-Allow-Origin', '*');
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Origin, Content-Type, Accept, Authorization, X-Requested-With, X-FT-API-ID, X-FT-Timestamp, X-FT-Nonce, X-FT-Signature');
+            return $response;
         }
 
         $response = $next($request);

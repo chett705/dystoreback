@@ -21,8 +21,8 @@ class TopupController extends Controller
      */
     public function catalog(): JsonResponse
     {
-        $games = TopupGame::query()
-            ->where('is_active', true)
+        // ⚡ កែប្រែមកប្រើ TopupGame::where() ដោយផ្ទាល់ (បំបាត់ Error 500)
+        $games = TopupGame::where('is_active', true)
             ->with(['packages' => fn($query) => $query->where('is_active', true)->orderBy('sort_order')])
             ->orderBy('name')
             ->get();

@@ -14,7 +14,7 @@ class TopupService
     {
         $endpoint = config('services.game_lookup.endpoint');
         $apiKey = config('services.game_lookup.api_key');
-        $timeout = (int) config('services.game_lookup.timeout', 20);
+        $timeout = (int) config('services.game_lookup.timeout', 30); // បង្កើន Default Timeout ដល់ ៣០ វិនាទី
 
         if (blank($endpoint) || blank($apiKey)) {
             return [
@@ -27,19 +27,22 @@ class TopupService
         }
 
         try {
-            $response = Http::timeout($timeout)->withHeaders([
-                'Authorization' => 'Bearer ' . $apiKey,
-                'Accept' => 'application/json',
-            ])->post($endpoint, [
-                'game_code' => $gameCode,
-                'player_id' => $playerId,
-                'zone_id' => $zoneId,
-            ]);
+            // បន្ថែម retry(2, 1000) ដើម្បីឱ្យវាសាកល្បង ២ ដងទៀត (ឃ្លាតគ្នា ១ វិនាទី) មុននឹង throw Exception
+            $response = Http::retry(2, 1000)
+                ->timeout($timeout)
+                ->withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Accept' => 'application/json',
+                ])->post($endpoint, [
+                    'game_code' => $gameCode,
+                    'player_id' => $playerId,
+                    'zone_id' => $zoneId,
+                ]);
 
             if (! $response->successful()) {
                 return [
                     'success' => false,
-                    'message' => 'Game lookup API returned an error.',
+                    'message' => 'Game lookup API returned an error status.',
                     'status' => $response->status(),
                     'body' => $response->json() ?? $response->body(),
                 ];
@@ -49,8 +52,21 @@ class TopupService
                 'success' => true,
                 'data' => $response->json(),
             ];
+        } catch (\Illuminate\Http\Client\ConnectionException $exception) {
+            // ចាប់យកករណី Connection Timeout ផ្ទាល់
+            Log::error('Game lookup API connection timed out.', [
+                'game_code' => $gameCode,
+                'player_id' => $playerId,
+                'zone_id' => $zoneId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'មិនអាចភ្ជាប់ទៅកាន់ប្រព័ន្ធផ្ទៀងផ្ទាត់បានទេ (Connection Timed Out)។ សូមសាកល្បងម្ដងទៀត។',
+            ];
         } catch (\Throwable $throwable) {
-            Log::warning('Game lookup failed.', [
+            Log::error('Game lookup failed due to server exception.', [
                 'game_code' => $gameCode,
                 'player_id' => $playerId,
                 'zone_id' => $zoneId,
@@ -59,7 +75,7 @@ class TopupService
 
             return [
                 'success' => false,
-                'message' => $throwable->getMessage(),
+                'message' => 'មានបញ្ហាបច្ចេកទេសកើតឡើង សូមព្យាយាមម្ដងទៀតនៅពេលក្រោយ។',
             ];
         }
     }

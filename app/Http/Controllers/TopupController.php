@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 
+use Illuminate\Http\Client\ConnectionException;
 class TopupController extends Controller
 {
     // public function __construct(private readonly TopupService $topupService) {}
@@ -49,79 +50,191 @@ class TopupController extends Controller
      * 🎯 មុខងារ Check ID (រូបមន្តផ្លូវការចុះបន្ទាត់ \n របស់ក្រុមហ៊ុន FlashTopUp)
      */
     public function checkUsername(Request $request): JsonResponse
-    {
-        $gameCode = $request->input('game_code') ?? $request->input('validation_code');
-        $playerId = $request->input('player_id') ?? $request->input('user_id');
-        $zoneId   = $request->input('zone_id') ?? $request->input('server_id') ?? '';
+{
+    $gameCode = $request->input('game_code')
+        ?? $request->input('validation_code');
 
-        $timestamp = (string) ($request->header('X-FT-Timestamp') ?? $request->input('ft_timestamp') ?? time());
-        $nonce     = $request->header('X-FT-Nonce') ?? $request->input('ft_nonce') ?? bin2hex(random_bytes(16));
+    $playerId = $request->input('player_id')
+        ?? $request->input('user_id');
 
-        if (!$gameCode || !$playerId) {
-            return response()->json(['message' => 'game_code and player_id are required.'], 422);
-        }
+    $zoneId = $request->input('zone_id')
+        ?? $request->input('server_id')
+        ?? '';
 
-        try {
-            $apiId     = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
-            $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY'));
-
-            $path = '/api/reseller/v2/check-id';
-            $method = 'POST';
-
-            $bodyData = [
-                'server_id'       => trim($zoneId),
-                'user_id'         => trim($playerId),
-                'validation_code' => strtolower(trim($gameCode)),
-            ];
-            ksort($bodyData);
-
-            $rawJsonBody = json_encode($bodyData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-            $bodyHash = hash('sha256', $rawJsonBody);
-            $canonical = implode("\n", [$method, $path, $timestamp, $nonce, $bodyHash]);
-            $signature = hash_hmac('sha256', $canonical, $secretKey);
-
-            $response = Http::withHeaders([
-                'Content-Type'    => 'application/json',
-                'X-FT-API-ID'     => $apiId,
-                'X-FT-Timestamp'  => $timestamp,
-                'X-FT-Nonce'      => $nonce,
-                'X-FT-Signature'  => $signature,
-            ])
-                ->withoutVerifying()
-                ->withBody($rawJsonBody, 'application/json')
-                ->post('https://api.flashtopup.com' . $path);
-
-            if ($response->successful()) {
-                $apiData = $response->json();
-
-                $playerName = $apiData['account_name']
-                    ?? $apiData['data']['account_name']
-                    ?? $apiData['player_name']
-                    ?? null;
-
-                return response()->json([
-                    'message' => 'Done',
-                    'result' => [
-                        'player_name' => $playerName,
-                        'username'    => $playerName,
-                        'name'        => $playerName,
-                        'raw_data'    => $apiData
-                    ]
-                ]);
-            }
-
-            $errorData = $response->json();
-            $statusCode = $response->status();
-
-            return response()->json([
-                'message' => $errorData['message'] ?? $errorData['error']['message'] ?? 'API Rejected',
-                'error'   => $errorData
-            ], $statusCode >= 100 && $statusCode < 600 ? $statusCode : 400);
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Error', 'error' => $e->getMessage()], 500);
-        }
+    if (!$gameCode || !$playerId) {
+        return response()->json([
+            'success' => false,
+            'message' => 'game_code and player_id are required.',
+        ], 422);
     }
+
+    $gameCode = strtolower(trim((string) $gameCode));
+    $playerId = trim((string) $playerId);
+    $zoneId = trim((string) $zoneId);
+
+    $apiId = trim(env('FLASH_TOPUP_API_ID', ''));
+    $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY', ''));
+
+    if ($apiId === '' || $secretKey === '') {
+        return response()->json([
+            'success' => false,
+            'message' => 'FlashTopup API credentials are missing.',
+        ], 500);
+    }
+
+    $baseUrl = 'https://api.flashtopup.com';
+    $path = '/api/reseller/v2/check-id';
+    $method = 'POST';
+
+    $timestamp = (string) (
+        $request->header('X-FT-Timestamp')
+        ?? $request->input('ft_timestamp')
+        ?? time()
+    );
+
+    $nonce = $request->header('X-FT-Nonce')
+        ?? $request->input('ft_nonce')
+        ?? bin2hex(random_bytes(16));
+
+    $bodyData = [
+        'server_id' => $zoneId,
+        'user_id' => $playerId,
+        'validation_code' => $gameCode,
+    ];
+
+    ksort($bodyData);
+
+    $rawJsonBody = json_encode(
+        $bodyData,
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+
+    if ($rawJsonBody === false) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to encode request body.',
+        ], 500);
+    }
+
+    $bodyHash = hash('sha256', $rawJsonBody);
+
+    $canonical = implode(
+        "*\n*",
+        [
+            $method,
+            $path,
+            $timestamp,
+            $nonce,
+            $bodyHash,
+        ]
+    );
+
+    $signature = hash_hmac(
+        'sha256',
+        $canonical,
+        $secretKey
+    );
+
+    try {
+        $response = Http::timeout(30)
+            ->connectTimeout(10)
+            ->withHeaders([
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+                'X-FT-API-ID' => $apiId,
+                'X-FT-Timestamp' => $timestamp,
+                'X-FT-Nonce' => $nonce,
+                'X-FT-Signature' => $signature,
+            ])
+            ->withBody(
+                $rawJsonBody,
+                'application/json'
+            )
+            ->post($baseUrl . $path);
+
+    } catch (ConnectionException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'FlashTopup connection failed. The provider did not respond in time.',
+            'error' => [
+                'type' => 'CONNECTION_TIMEOUT',
+                'message' => $e->getMessage(),
+                'game_code' => $gameCode,
+            ],
+        ], 504);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unexpected error while checking player.',
+            'error' => [
+                'type' => get_class($e),
+                'message' => $e->getMessage(),
+            ],
+        ], 500);
+    }
+
+    $statusCode = $response->status();
+    $apiData = $response->json();
+
+    if (!is_array($apiData)) {
+        $apiData = [
+            'raw_response' => $response->body(),
+        ];
+    }
+
+    if ($response->successful()) {
+        $playerName =
+            $apiData['account_name']
+            ?? $apiData['data']['account_name']
+            ?? $apiData['player_name']
+            ?? $apiData['data']['player_name']
+            ?? $apiData['username']
+            ?? $apiData['data']['username']
+            ?? null;
+
+        if (!$playerName) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Player was found, but username was not returned.',
+                'result' => [
+                    'raw_data' => $apiData,
+                ],
+            ], 502);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Done',
+            'result' => [
+                'player_name' => $playerName,
+                'username' => $playerName,
+                'name' => $playerName,
+                'raw_data' => $apiData,
+            ],
+        ], 200);
+    }
+
+    $providerMessage =
+        $apiData['message']
+        ?? $apiData['error']['message']
+        ?? $apiData['error']
+        ?? 'FlashTopup API rejected the request.';
+
+    return response()->json([
+        'success' => false,
+        'message' => $providerMessage,
+        'error' => [
+            'provider_status' => $statusCode,
+            'provider_response' => $apiData,
+            'game_code' => $gameCode,
+            'player_id' => $playerId,
+            'zone_id' => $zoneId,
+        ],
+    ], ($statusCode >= 100 && $statusCode <= 599)
+        ? $statusCode
+        : 502);
+}
 
     /**
      * បង្កើត Order ថ្មីក្នុងប្រព័ន្ធ និងទាញយក KHQR

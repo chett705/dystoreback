@@ -85,7 +85,7 @@ class TopupService
      */
     public function buildKhqrCheckout(TopupOrder $order): array
     {
-        $gatewayUrl = 'https://khqr.cc/api/payment/requestv2/tW6PHjgPyzISFi3KK22hKZ57rag1cWHS';
+        $gatewayUrl = 'https://khqr.cc/api/payment/requestv2';
         $profileId = 'tW6PHjgPyzISFi3KK22hKZ57rag1cWHS';
         $secretKey = 'zsFq7SWHV4gYFSAdfg2ud8WV747tBOei';
 

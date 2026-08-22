@@ -28,7 +28,6 @@ class TopupController extends Controller
                 ->get();
 
             return response()->json(['data' => $games], 200);
-
         } catch (\Throwable $e) {
             Log::error("🚨 Catalog Function Error: " . $e->getMessage());
             return response()->json(['message' => 'Server Error', 'error' => $e->getMessage()], 500);
@@ -61,6 +60,12 @@ class TopupController extends Controller
             return response()->json(['message' => 'game_code and player_id are required.'], 422);
         }
 
+        // 💡 ដំណោះស្រាយ៖ Map គ្រប់ variants នៃ MLBB validation code ឱ្យមកប្រើ "mlbb" វិញសម្រាប់តែ check ID
+        $validationCode = strtolower(trim($gameCode));
+        if (in_array($validationCode, ['mlbb_exclusive', 'mlbb_ex', 'mlbb_br'])) {
+            $validationCode = 'mlbb';
+        }
+
         try {
             $apiId     = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
             $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY'));
@@ -71,7 +76,7 @@ class TopupController extends Controller
             $bodyData = [
                 'server_id'       => trim($zoneId),
                 'user_id'         => trim($playerId),
-                'validation_code' => strtolower(trim($gameCode)),
+                'validation_code' => $validationCode, // ប្រើតម្លៃដែលបាន Normalize រួច
             ];
             ksort($bodyData);
 
@@ -165,7 +170,6 @@ class TopupController extends Controller
             ]);
 
             return response()->json(['message' => 'QR Generated', 'order' => $order, 'checkout_url' => $checkoutUrl], 201);
-            
         } catch (\Throwable $e) {
             Log::error("🚨 Create Order Function Error: " . $e->getMessage());
             return response()->json(['message' => 'Error', 'error' => $e->getMessage()], 500);
@@ -210,7 +214,7 @@ class TopupController extends Controller
                 $orderStatus = $request->input('order_status');
 
                 $order = TopupOrder::where('order_no', $referenceId)->first();
-                
+
                 if (!$order) {
                     if (str_contains(strtolower($referenceId), 'test') || $referenceId === 'REF-TEST-001') {
                         return response()->json(['success' => true, 'message' => 'Test Webhook Received'], 200);
@@ -247,7 +251,7 @@ class TopupController extends Controller
             if (!$order) return response()->json(['message' => 'Order not found'], 404);
 
             if (in_array(strtolower($request->input('status')), ['success', 'paid', 'completed'])) {
-                
+
                 if (in_array($order->status, ['processing', 'success'])) {
                     return response()->json(['success' => true, 'status' => 'success', 'message' => 'Already processed']);
                 }
@@ -256,7 +260,7 @@ class TopupController extends Controller
 
                 try {
                     $order->load(['game', 'package']);
-                    
+
                     $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
                     $skuValue = trim($skuValue);
 
@@ -268,19 +272,27 @@ class TopupController extends Controller
                         $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142';
                         $productId = 3;
                     } elseif ((int)$skuValue >= 267 && (int)$skuValue <= 350) {
-                        $productId = 5; 
+                        $productId = 5;
                         $diamondsMap = [
-                            '267' => '5_DIAMONDS', '268' => '11_DIAMONDS', '269' => '22_DIAMONDS',
-                            '270' => '33_DIAMONDS', '271' => '55_DIAMONDS', '272' => '56_DIAMONDS',
+                            '267' => '5_DIAMONDS',
+                            '268' => '11_DIAMONDS',
+                            '269' => '22_DIAMONDS',
+                            '270' => '33_DIAMONDS',
+                            '271' => '55_DIAMONDS',
+                            '272' => '56_DIAMONDS',
                             '273' => '112_DIAMONDS'
                         ];
                         $diamondStr = $diamondsMap[$skuValue] ?? '55_DIAMONDS';
                         $serviceCode = "TOPUP_MOBILE_LEGENDS_EXCLUSIVE_5_{$diamondStr}_{$skuValue}";
                     } elseif ((int)$skuValue >= 2134 && (int)$skuValue <= 2150) {
-                        $productId = 107; 
+                        $productId = 107;
                         $mcMap = [
-                            '2134' => '5_DIAMONDS', '2135' => '11_DIAMONDS', '2136' => '22_DIAMONDS',
-                            '2137' => '55_DIAMONDS', '2138' => '56_DIAMONDS', '2139' => '86_DIAMONDS',
+                            '2134' => '5_DIAMONDS',
+                            '2135' => '11_DIAMONDS',
+                            '2136' => '22_DIAMONDS',
+                            '2137' => '55_DIAMONDS',
+                            '2138' => '56_DIAMONDS',
+                            '2139' => '86_DIAMONDS',
                             '2140' => '112_DIAMONDS'
                         ];
                         $mcStr = $mcMap[$skuValue] ?? '55_DIAMONDS';
@@ -296,22 +308,22 @@ class TopupController extends Controller
 
                     $apiId       = 'RSMNGJ90S66GU8IC';
                     $flashSecret = '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497';
-                    $timestamp   = (string) time(); 
+                    $timestamp   = (string) time();
                     $nonce       = bin2hex(random_bytes(16));
-                    $path        = '/api/reseller/v2/order'; 
+                    $path        = '/api/reseller/v2/order';
 
                     $orderBody = [
-                        'product_id'   => (int)$productId,    
+                        'product_id'   => (int)$productId,
                         'quantity'     => 1,
-                        'reference_id' => (string)$order->order_no, 
+                        'reference_id' => (string)$order->order_no,
                         'server_id'    => (string)trim($order->zone_id),
-                        'service_code' => (string)trim($serviceCode), 
+                        'service_code' => (string)trim($serviceCode),
                         'user_id'      => (string)trim($order->player_id),
                     ];
-                    
+
                     ksort($orderBody);
                     $orderJson = json_encode($orderBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    
+
                     $orderBodyHash = hash('sha256', $orderJson);
                     $orderCanonical = implode("\n", ['POST', $path, $timestamp, $nonce, $orderBodyHash]);
                     $orderSignature = hash_hmac('sha256', $orderCanonical, $flashSecret);
@@ -323,25 +335,24 @@ class TopupController extends Controller
                         'X-FT-Nonce'      => $nonce,
                         'X-FT-Signature'  => $orderSignature,
                     ])
-                    ->withoutVerifying() 
-                    ->withBody($orderJson, 'application/json')
-                    ->post('https://api.flashtopup.com' . $path);
+                        ->withoutVerifying()
+                        ->withBody($orderJson, 'application/json')
+                        ->post('https://api.flashtopup.com' . $path);
 
                     if ($flashResponse->successful()) {
                         Log::info("✅ [AUTO SUCCESS] Pushed Successfully: {$order->order_no}");
                     } else {
                         Log::error("❌ [AUTO REFUSED] Refused by FlashTopUp: {$order->order_no}");
-                        $order->update(['status' => 'manual_hold']); 
+                        $order->update(['status' => 'manual_hold']);
                     }
-
                 } catch (\Throwable $ex) {
                     Log::critical("🚨 [AUTO EXCEPTION] Error: " . $ex->getMessage());
-                    $order->update(['status' => 'manual_hold']); 
+                    $order->update(['status' => 'manual_hold']);
                 }
 
                 return response()->json(['success' => true, 'status' => 'success', 'message' => 'Processed']);
             }
-            
+
             return response()->json(['message' => 'Non-success status'], 400);
         } catch (\Throwable $e) {
             Log::error("🚨 Critical Webhook Error: " . $e->getMessage());

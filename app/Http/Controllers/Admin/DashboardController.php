@@ -69,12 +69,21 @@ class DashboardController extends Controller
             'is_active'   => ['nullable', 'boolean'],
         ]);
 
-        $game->update([
-            'code'        => strtolower(trim($validated['code'])),
-            'name'        => trim($validated['name']),
-            'api_game_id' => $validated['api_game_id'] ?? $game->api_game_id,
-            'is_active'   => $request->has('is_active') ? $request->boolean('is_active') : $game->is_active,
-        ]);
+        // 🎯 ឆែកមើលថាបើ field api_game_id មានក្នុង request គឺ update តាមហ្នឹង (ទោះជា null ក៏ដោយ)
+        $updateData = [
+            'code' => strtolower(trim($validated['code'])),
+            'name' => trim($validated['name']),
+        ];
+
+        if (array_key_exists('api_game_id', $validated)) {
+            $updateData['api_game_id'] = $validated['api_game_id'];
+        }
+
+        if ($request->has('is_active')) {
+            $updateData['is_active'] = $request->boolean('is_active');
+        }
+
+        $game->update($updateData);
 
         return response()->json([
             'message' => 'Game updated successfully.',

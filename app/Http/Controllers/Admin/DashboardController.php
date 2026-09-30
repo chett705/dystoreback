@@ -208,12 +208,52 @@ class DashboardController extends Controller
             $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
             $skuValue = trim($skuValue);
 
-            // ⚙️ Smart Auto-Mapping Engine សម្រាប់ផ្ទាំង Manual ចុចដៃ
-            if ($skuValue == '38' || empty($skuValue)) {
-                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
+            // ⚙️ Smart Auto-Mapping Engine សម្រាប់ផ្ទាំង Manual ចុចដៃ និង FlashTopUp Official Service Codes
+            $mlbbServiceCodes = [
+                '38'  => 'MOBILE_LEGENDS_55_DIAMONDS',
+                '55'  => 'MOBILE_LEGENDS_55_DIAMONDS',
+                '86'  => 'MOBILE_LEGENDS_86_DIAMONDS',
+                '142' => 'MOBILE_LEGENDS_WEEKLY',
+                '165' => 'MOBILE_LEGENDS_165_DIAMONDS',
+                '172' => 'MOBILE_LEGENDS_172_DIAMONDS',
+                '257' => 'MOBILE_LEGENDS_257_DIAMONDS',
+                '275' => 'MOBILE_LEGENDS_275_DIAMONDS',
+                '343' => 'MOBILE_LEGENDS_343_DIAMONDS',
+                '344' => 'MOBILE_LEGENDS_344_DIAMONDS',
+                '429' => 'MOBILE_LEGENDS_429_DIAMONDS',
+                '430' => 'MOBILE_LEGENDS_430_DIAMONDS',
+                '514' => 'MOBILE_LEGENDS_514_DIAMONDS',
+                '516' => 'MOBILE_LEGENDS_516_DIAMONDS',
+                '565' => 'MOBILE_LEGENDS_565_DIAMONDS',
+                '600' => 'MOBILE_LEGENDS_600_DIAMONDS',
+                '602' => 'MOBILE_LEGENDS_602_DIAMONDS',
+                '706' => 'MOBILE_LEGENDS_706_DIAMONDS',
+                '792' => 'MOBILE_LEGENDS_792_DIAMONDS',
+            ];
+
+            $packageName = strtolower($order->package?->name ?? '');
+            $diamondAmount = (int)($order->package?->diamond_amount ?? $order->diamond_amount ?? 0);
+
+            if (str_starts_with($skuValue, 'MOBILE_LEGENDS_')) {
+                $serviceCode = $skuValue;
                 $productId = 3;
-            } elseif ($skuValue == '142') {
-                $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142';
+            } elseif (isset($mlbbServiceCodes[$skuValue])) {
+                $serviceCode = $mlbbServiceCodes[$skuValue];
+                $productId = 3;
+            } elseif (str_contains($packageName, 'weekly elite')) {
+                $serviceCode = 'MOBILE_LEGENDS_WEEKLY_ELITE_PACK';
+                $productId = 3;
+            } elseif (str_contains($packageName, 'monthly elite')) {
+                $serviceCode = 'MOBILE_LEGENDS_MONTHLY_ELITE_PACK';
+                $productId = 3;
+            } elseif (str_contains($packageName, 'weekly') || str_contains($packageName, 'pass')) {
+                $serviceCode = 'MOBILE_LEGENDS_WEEKLY';
+                $productId = 3;
+            } elseif (str_contains($packageName, 'twilight')) {
+                $serviceCode = 'MOBILE_LEGENDS_TWILIGHT';
+                $productId = 3;
+            } elseif (isset($mlbbServiceCodes[(string)$diamondAmount])) {
+                $serviceCode = $mlbbServiceCodes[(string)$diamondAmount];
                 $productId = 3;
             } elseif ((int)$skuValue >= 267 && (int)$skuValue <= 350) {
                 $productId = 5;
@@ -245,8 +285,11 @@ class DashboardController extends Controller
                 $parts = explode('|', $skuValue);
                 $productId = (int)trim($parts[0]);
                 $serviceCode = trim($parts[1]);
-            } else {
+            } elseif (!empty($skuValue)) {
                 $serviceCode = $skuValue;
+                $productId = 3;
+            } else {
+                $serviceCode = 'MOBILE_LEGENDS_55_DIAMONDS';
                 $productId = 3;
             }
 

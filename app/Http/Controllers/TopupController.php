@@ -60,15 +60,33 @@ class TopupController extends Controller
             return response()->json(['message' => 'game_code and player_id are required.'], 422);
         }
 
-        // 💡 ដំណោះស្រាយ៖ Map គ្រប់ variants នៃ MLBB validation code ឱ្យមកប្រើ "mlbb" វិញសម្រាប់តែ check ID
-        $validationCode = strtolower(trim($gameCode));
-        if (in_array($validationCode, ['mlbb_exclusive', 'mlbb_ex', 'mlbb_br'])) {
-            $validationCode = 'mlbb';
+        // 💡 ដំណោះស្រាយ៖ Map គ្រប់ variants នៃ Mobile Legends ឱ្យមកប្រើ "TOPUP_MOBILE_LEGENDS" ផ្លូវការរបស់ FlashTopUp
+        $normalizedCode = strtolower(trim($gameCode));
+        if (in_array($normalizedCode, [
+            'mlbb',
+            'mobile_legends',
+            'mobile_legend',
+            'mobile-legends',
+            'mobilelegends',
+            'mlbb_exclusive',
+            'mlbb_ex',
+            'mlbb_br',
+            'topup_mobile_legends',
+            'topup_mobile_legends_exclusive',
+            'topup_mobile_legends_brazil',
+        ])) {
+            $validationCode = 'TOPUP_MOBILE_LEGENDS';
+        } elseif (in_array($normalizedCode, ['mlbb_adventure', 'topup_mobile_legends_adventure'])) {
+            $validationCode = 'TOPUP_MOBILE_LEGENDS_ADVENTURE';
+        } elseif (str_starts_with($normalizedCode, 'topup_') || str_starts_with($normalizedCode, 'giftcard_')) {
+            $validationCode = strtoupper(trim($gameCode));
+        } else {
+            $validationCode = strtoupper(trim($gameCode));
         }
 
         try {
             $apiId     = trim(env('FLASH_TOPUP_API_ID', 'RSMNGJ90S66GU8IC'));
-            $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY'));
+            $secretKey = trim(env('FLASH_TOPUP_SECRET_KEY', '1c5e38d93eadd3f18ff717f3d2d3a925e3549190ce373690c5e68917aa6e9497'));
 
             $path = '/api/reseller/v2/check-id';
             $method = 'POST';
@@ -264,12 +282,52 @@ class TopupController extends Controller
                     $skuValue = $order->package ? ($order->package->sku ?? $order->package->code) : null;
                     $skuValue = trim($skuValue);
 
-                    // ⚙️ Smart Auto-Mapping Engine (ស្គាល់គ្រប់ ID ខ្លីៗលើផ្ទាំង Admin)
-                    if ($skuValue == '38' || empty($skuValue)) {
-                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_55_DIAMONDS_38';
+                    // ⚙️ Smart Auto-Mapping Engine (ស្គាល់គ្រប់ ID ខ្លីៗលើផ្ទាំង Admin និង FlashTopUp Official Service Codes)
+                    $mlbbServiceCodes = [
+                        '38'  => 'MOBILE_LEGENDS_55_DIAMONDS',
+                        '55'  => 'MOBILE_LEGENDS_55_DIAMONDS',
+                        '86'  => 'MOBILE_LEGENDS_86_DIAMONDS',
+                        '142' => 'MOBILE_LEGENDS_WEEKLY',
+                        '165' => 'MOBILE_LEGENDS_165_DIAMONDS',
+                        '172' => 'MOBILE_LEGENDS_172_DIAMONDS',
+                        '257' => 'MOBILE_LEGENDS_257_DIAMONDS',
+                        '275' => 'MOBILE_LEGENDS_275_DIAMONDS',
+                        '343' => 'MOBILE_LEGENDS_343_DIAMONDS',
+                        '344' => 'MOBILE_LEGENDS_344_DIAMONDS',
+                        '429' => 'MOBILE_LEGENDS_429_DIAMONDS',
+                        '430' => 'MOBILE_LEGENDS_430_DIAMONDS',
+                        '514' => 'MOBILE_LEGENDS_514_DIAMONDS',
+                        '516' => 'MOBILE_LEGENDS_516_DIAMONDS',
+                        '565' => 'MOBILE_LEGENDS_565_DIAMONDS',
+                        '600' => 'MOBILE_LEGENDS_600_DIAMONDS',
+                        '602' => 'MOBILE_LEGENDS_602_DIAMONDS',
+                        '706' => 'MOBILE_LEGENDS_706_DIAMONDS',
+                        '792' => 'MOBILE_LEGENDS_792_DIAMONDS',
+                    ];
+
+                    $packageName = strtolower($order->package?->name ?? '');
+                    $diamondAmount = (int)($order->package?->diamond_amount ?? $order->diamond_amount ?? 0);
+
+                    if (str_starts_with($skuValue, 'MOBILE_LEGENDS_')) {
+                        $serviceCode = $skuValue;
                         $productId = 3;
-                    } elseif ($skuValue == '142') {
-                        $serviceCode = 'TOPUP_MOBILE_LEGENDS_3_WEEKLY_142';
+                    } elseif (isset($mlbbServiceCodes[$skuValue])) {
+                        $serviceCode = $mlbbServiceCodes[$skuValue];
+                        $productId = 3;
+                    } elseif (str_contains($packageName, 'weekly elite')) {
+                        $serviceCode = 'MOBILE_LEGENDS_WEEKLY_ELITE_PACK';
+                        $productId = 3;
+                    } elseif (str_contains($packageName, 'monthly elite')) {
+                        $serviceCode = 'MOBILE_LEGENDS_MONTHLY_ELITE_PACK';
+                        $productId = 3;
+                    } elseif (str_contains($packageName, 'weekly') || str_contains($packageName, 'pass')) {
+                        $serviceCode = 'MOBILE_LEGENDS_WEEKLY';
+                        $productId = 3;
+                    } elseif (str_contains($packageName, 'twilight')) {
+                        $serviceCode = 'MOBILE_LEGENDS_TWILIGHT';
+                        $productId = 3;
+                    } elseif (isset($mlbbServiceCodes[(string)$diamondAmount])) {
+                        $serviceCode = $mlbbServiceCodes[(string)$diamondAmount];
                         $productId = 3;
                     } elseif ((int)$skuValue >= 267 && (int)$skuValue <= 350) {
                         $productId = 5;
@@ -301,8 +359,11 @@ class TopupController extends Controller
                         $parts = explode('|', $skuValue);
                         $productId = (int)trim($parts[0]);
                         $serviceCode = trim($parts[1]);
-                    } else {
+                    } elseif (!empty($skuValue)) {
                         $serviceCode = $skuValue;
+                        $productId = 3;
+                    } else {
+                        $serviceCode = 'MOBILE_LEGENDS_55_DIAMONDS';
                         $productId = 3;
                     }
 

@@ -60,7 +60,8 @@ class TopupController extends Controller
             return response()->json(['message' => 'game_code and player_id are required.'], 422);
         }
 
-        // 💡 ដំណោះស្រាយ៖ Map គ្រប់ variants នៃ Mobile Legends ឱ្យមកប្រើ "TOPUP_MOBILE_LEGENDS" ផ្លូវការរបស់ FlashTopUp
+        // 💡 Map validation_code for FlashTopUp check-id API
+        // Note: check-id uses short codes (mlbb), NOT TOPUP_MOBILE_LEGENDS
         $normalizedCode = strtolower(trim($gameCode));
         if (in_array($normalizedCode, [
             'mlbb',
@@ -68,20 +69,25 @@ class TopupController extends Controller
             'mobile_legend',
             'mobile-legends',
             'mobilelegends',
+            'topup_mobile_legends',
+        ])) {
+            $validationCode = 'mlbb'; // ✅ FlashTopUp check-id ទទួល 'mlbb' ផ្លូវការ
+        } elseif (in_array($normalizedCode, [
             'mlbb_exclusive',
             'mlbb_ex',
-            'mlbb_br',
-            'topup_mobile_legends',
             'topup_mobile_legends_exclusive',
+        ])) {
+            $validationCode = 'mlbb'; // Exclusive ប្រើ mlbb ដូចគ្នា
+        } elseif (in_array($normalizedCode, [
+            'mlbb_br',
             'topup_mobile_legends_brazil',
         ])) {
-            $validationCode = 'TOPUP_MOBILE_LEGENDS';
+            $validationCode = 'mlbb'; // Brazil ប្រើ mlbb ដូចគ្នា
         } elseif (in_array($normalizedCode, ['mlbb_adventure', 'topup_mobile_legends_adventure'])) {
-            $validationCode = 'TOPUP_MOBILE_LEGENDS_ADVENTURE';
-        } elseif (str_starts_with($normalizedCode, 'topup_') || str_starts_with($normalizedCode, 'giftcard_')) {
-            $validationCode = strtoupper(trim($gameCode));
+            $validationCode = 'mlbb_adventure';
         } else {
-            $validationCode = strtoupper(trim($gameCode));
+            // Other games: pass as-is (e.g. free_fire, pubg_mobile)
+            $validationCode = $normalizedCode;
         }
 
         try {

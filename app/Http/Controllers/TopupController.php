@@ -100,7 +100,7 @@ class TopupController extends Controller
             $bodyData = [
                 'server_id'       => trim($zoneId),
                 'user_id'         => trim($playerId),
-                'validation_code' => $validationCode, // ប្រើតម្លៃដែលបាន Normalize រួច
+                'validation_code' => $validationCode,
             ];
             ksort($bodyData);
 
@@ -109,6 +109,20 @@ class TopupController extends Controller
             $bodyHash = hash('sha256', $rawJsonBody);
             $canonical = implode("\n", [$method, $path, $timestamp, $nonce, $bodyHash]);
             $signature = hash_hmac('sha256', $canonical, $secretKey);
+
+            // 🔍 DEBUG LOG — ត្រួតពិនិត្យ Request ទៅ FlashTopUp
+            Log::info('🔍 [CHECK-ID] Sending to FlashTopUp', [
+                'url'            => 'https://api.flashtopup.com' . $path,
+                'body'           => $bodyData,
+                'raw_json'       => $rawJsonBody,
+                'validation_code'=> $validationCode,
+                'timestamp'      => $timestamp,
+                'nonce'          => $nonce,
+                'body_hash'      => $bodyHash,
+                'canonical'      => $canonical,
+                'signature'      => $signature,
+                'api_id'         => $apiId,
+            ]);
 
             $response = Http::withHeaders([
                 'Content-Type'    => 'application/json',
@@ -120,6 +134,12 @@ class TopupController extends Controller
                 ->withoutVerifying()
                 ->withBody($rawJsonBody, 'application/json')
                 ->post('https://api.flashtopup.com' . $path);
+
+            // 🔍 DEBUG LOG — ត្រួតពិនិត្យ Response ពី FlashTopUp
+            Log::info('🔍 [CHECK-ID] FlashTopUp Response', [
+                'http_status' => $response->status(),
+                'body'        => $response->json() ?? $response->body(),
+            ]);
 
             if ($response->successful()) {
                 $apiData = $response->json();
